@@ -1,7 +1,11 @@
 package models
 
 type Pagination struct {
-	currentPage int `json:"current_page"`
-	lastPage    int `json:"last_page"`
-	pageSize    int `json:"page_size"`
+	CurrentPage int `json:"current_page"`
+	LastPage    int `json:"last_page"`
+	PageSize    int `json:"page_size"`
 }
+
+const (
+	DEFAULT_PAGE_SIZE = 100
+)

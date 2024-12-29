@@ -7,35 +7,49 @@ import (
 	"time"
 )
 
+func FetchOne[T any](db *sqlx.DB, query string, args ...interface{}) (T, error) {
+	var result T
+	err := db.Get(&result, query, args...)
+	return result, err
+}
+
+func FetchAll[T any](db *sqlx.DB, query string, args ...interface{}) ([]T, error) {
+	var result []T
+	err := db.Select(&result, query, args...)
+	return result, err
+}
+
 func GetUserByUsername(username *string, db *sqlx.DB) (models.User, error) {
 	var user models.User
 	err := db.Get(&user, "SELECT * FROM users WHERE username = $1", *username)
 	return user, err
 }
 
-func GetUserByUserID(userID *uuid.UUID, db *sqlx.DB) (models.User, error) {
+func _GetUserByUserID(userID *uuid.UUID, db *sqlx.DB) (models.User, error) {
 	var user models.User
 	err := db.Get(&user, "SELECT * FROM users WHERE id = $1", (*userID).String())
 	return user, err
 }
 
-func InsertUser(user *models.User, db *sqlx.DB) error {
-	_, err := db.Exec(
-		"INSERT INTO users(id, username, password_hash) VALUES ($1, $2, $3)",
-		user.ID,
-		user.Username,
-		user.Password,
-	)
+func EditUserProfile(userProfile *models.UserProfile, db *sqlx.DB) error {
+	query := "UPDATE user_profiles SET " +
+		"profile_picture_path = :profile_photo_path," +
+		"biodata = :biodata," +
+		"email = :email," +
+		"post_count = :post_count," +
+		"comment_count = :comment_count," +
+		"preferred_lang = :preferred_lang" +
+		"preferred_theme = :preferred_theme" +
+		"creation_date = :creation_date" +
+		"last_login = :last_login" +
+		"WHERE id = :id"
+	_, err := db.NamedExec(query, userProfile)
+	return err
+}
 
-	curTime := time.Now()
-
-	_, err = db.Exec(
-		"INSERT INTO user_profiles(id, creation_date, last_login) VALUES ($1, $2, $3)",
-		user.ID,
-		curTime,
-		curTime,
-	)
-
+func DeleteUser(userID *uuid.UUID, db *sqlx.DB) error {
+	query := "DELETE FROM users WHERE id = $1"
+	_, err := db.Exec(query, userID.String())
 	return err
 }
 
@@ -49,19 +63,28 @@ func InsertRefreshToken(user *models.User, refreshTokenHash string, expirationDa
 	return err
 }
 
-func InsertThread(thread *models.Thread, userID uuid.UUID, db *sqlx.DB) error {
-	curTime := time.Now()
+func DeleteThread(threadID int, db *sqlx.DB) error {
+	query := "DELETE FROM threads WHERE id = $1"
+	_, err := db.Exec(query, threadID)
+	return err
+}
 
-	_, err := db.Exec(
-		"INSERT INTO threads(user_id, title, original_post, creation_date, updated_date, like_count, view_count) VALUES ($1, $2, $3, $4, $5, $6, $7)",
-		userID,
-		thread.Title,
-		thread.OriginalPost,
-		curTime,
-		curTime,
-		0,
-		0,
-	)
+func InsertComment(comment *models.Comment, db *sqlx.DB) error {
+	query := "INSERT INTO comments(thread_id, user_id, comment) VALUES ($1, $2, $3)"
+	_, err := db.Exec(query, comment.ThreadID, comment.UserID, comment.Comment)
+	return err
+}
 
+func EditComment(comment *models.Comment, db *sqlx.DB) error {
+	query := "UPDATE comments SET " +
+		"comment = $1, " +
+		"updated_date = $2 WHERE id = $3"
+	_, err := db.Exec(query, comment.Comment, time.Now(), comment.ID)
+	return err
+}
+
+func DeleteComment(comment *models.Comment, db *sqlx.DB) error {
+	query := "DELETE FROM comments WHERE id = $1"
+	_, err := db.Exec(query, comment.ID)
 	return err
 }

@@ -1,6 +1,7 @@
 package utils_auth
 
 import (
+	"1chanserver/internal/utils/utils_db"
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
@@ -35,8 +36,9 @@ const (
 	JWT_REFRESH_TOKEN_EXPIRATION = 14 * 24 * time.Hour
 )
 
-// formatHash formats the generated hash and salt into a conventional format
-// for storage
+// formatHash takes in a salt and Argon2hash of a password in bytes,
+// and returns a string containig the cost parameter used to generate the hash,
+// as well as the base64-encoded hash and salt for storage.
 func formatHash(salt []byte, hashedPassword []byte) string {
 	encodedSalt := base64.RawStdEncoding.EncodeToString(salt)
 	encodedHashedPassword := base64.RawStdEncoding.EncodeToString(hashedPassword)
@@ -51,7 +53,11 @@ func formatHash(salt []byte, hashedPassword []byte) string {
 	)
 }
 
-func parsePasswordHash(passwordHash *string) (
+// parsePasswordHashStdForm takes in the standard representation
+// of a hashed password in string format, where the Argon2 hash and
+// salt is base64-encoded, and returns the memory, time, and time parameter
+// used to generate the hash, as well as the base64-encoded hash and salt.
+func parsePasswordHashStdForm(passwordHash *string) (
 	uint32, uint32, uint8, string, string, error) {
 	pattern := fmt.Sprintf(
 		"^\\$argon2id\\$v=%d\\$m=(\\d+),t=(\\d+),p=(\\d+)\\$([A-Za-z0-9+/=]+)\\$([A-Za-z0-9+/=]+)$",
@@ -70,6 +76,8 @@ func parsePasswordHash(passwordHash *string) (
 	return uint32(arg2Mem), uint32(arg2Time), uint8(arg2Threads), matches[4], matches[5], nil
 }
 
+// generateArgon2Salt generates a random salt as bytes for an
+// Argon2 hash generation.
 func generateArgon2Salt() []byte {
 	salt := make([]byte, ARGON2_SALTLENGTH)
 	if _, err := rand.Read(salt); err != nil {
@@ -79,18 +87,26 @@ func generateArgon2Salt() []byte {
 	return salt
 }
 
+// generateArgon2Hash takes in a payload and salt in bytes
+// and returns the Argon2hash of the payload as bytes.
 func generateArgon2Hash(payload []byte, salt []byte) []byte {
 	return argon2.IDKey(payload, salt, ARGON2_TIME, ARGON2_MEMORY, ARGON2_THREADS, ARGON2_KEYLENGTH)
 }
 
+// GenerateArgon2Hash takes in a string payload in its original form and
+// returns the Argon2 hash of the payload along with its salt, as a string
+// formatted in the standard format. The hash and the salt is encoded as base64.
 func GenerateArgon2Hash(payload string) string {
 	salt := generateArgon2Salt()
 	hash := generateArgon2Hash([]byte(payload), salt)
 	return formatHash(salt, hash)
 }
 
+// VerifyArgon2Hash takes in a string payload and storedHash, and checks if the
+// hash of the payload matches storedHash. Note that storedHash must be in the
+// standard representation of Argon2Hash (i.e. the output of GenerateArgon2Hash)
 func VerifyArgon2Hash(payload string, storedHash string) bool {
-	arg2Mem, arg2Time, arg2Threads, salt, expectedHash, err := parsePasswordHash(&storedHash)
+	arg2Mem, arg2Time, arg2Threads, salt, expectedHash, err := parsePasswordHashStdForm(&storedHash)
 	if err != nil {
 		return false
 	}
@@ -111,9 +127,9 @@ func GenerateAccessToken(userID uuid.UUID) (string, error) {
 	claims := Claims{
 		UserID: userID,
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(JWT_ACCESS_TOKEN_EXPIRATION)),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			NotBefore: jwt.NewNumericDate(time.Now()),
+			ExpiresAt: jwt.NewNumericDate(time.Now().UTC().Add(JWT_ACCESS_TOKEN_EXPIRATION)),
+			IssuedAt:  jwt.NewNumericDate(time.Now().UTC()),
+			NotBefore: jwt.NewNumericDate(time.Now().UTC()),
 		},
 	}
 
@@ -125,9 +141,9 @@ func GenerateRefreshToken(userID uuid.UUID) (string, error) {
 	claims := Claims{
 		UserID: userID,
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(JWT_REFRESH_TOKEN_EXPIRATION)),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			NotBefore: jwt.NewNumericDate(time.Now()),
+			ExpiresAt: jwt.NewNumericDate(time.Now().UTC().Add(JWT_REFRESH_TOKEN_EXPIRATION)),
+			IssuedAt:  jwt.NewNumericDate(time.Now().UTC()),
+			NotBefore: jwt.NewNumericDate(time.Now().UTC()),
 		},
 	}
 
@@ -142,8 +158,8 @@ func HashRefreshToken(refreshToken string) string {
 }
 
 func ValidateRefreshToken(db *sqlx.DB, userID uuid.UUID, givenRefreshToken string) error {
-	var storedHash string
-	err := db.Get(&storedHash, "SELECT token_hash FROM refresh_tokens WHERE user_id = $1", userID)
+	storedHash, err := utils_db.FetchOne[string](
+		db, "SELECT token_hash FROM refresh_tokens WHERE user_id = $1", userID)
 
 	if err != nil {
 		return err

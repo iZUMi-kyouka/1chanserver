@@ -16,3 +16,13 @@ func AuthCheck(c *gin.Context) {
 		"message": "You are authorised.",
 	})
 }
+
+func ReflectPath(c *gin.Context) {
+	required := c.Param("required")
+	optional := c.Param("optional")
+
+	c.JSON(http.StatusCreated, gin.H{
+		"required": required,
+		"optional": optional,
+	})
+}
