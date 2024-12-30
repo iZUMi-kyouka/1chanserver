@@ -13,7 +13,9 @@ import (
 	"errors"
 	"fmt"
 	"github.com/gin-gonic/gin"
+	"github.com/jmoiron/sqlx"
 	"log"
+	"time"
 )
 
 func main() {
@@ -94,10 +96,39 @@ func main() {
 
 	}
 
+	stop := make(chan struct{})
+	go func() {
+		log.Println("started background task: cleanup expired refresh token every 6 hours")
+		cleanupExpiredRefreshToken(database.DB, stop)
+	}()
+
 	defer func() {
+		close(stop)
 		err := database.DB.Close()
 		log.Fatalf("failed to close db: %s", err.Error())
 	}()
 
 	r.Run()
+}
+
+func cleanupExpiredRefreshToken(db *sqlx.DB, stop chan struct{}) {
+	ticker := time.NewTicker(6 * time.Hour)
+	defer ticker.Stop()
+	query := "DELETE FROM refresh_tokens WHERE expiration_date < NOW()"
+
+	for {
+		select {
+		case <-stop:
+			log.Println("[cleanupExpiredRefreshToken] stopping...")
+			return
+		case <-ticker.C:
+			_, err := db.Exec(query)
+			if err != nil {
+				log.Printf("[cleanupExpiredRefreshToken] failed to cleanup expired refresh token: %s\n", err.Error())
+			} else {
+				log.Println("[cleanupExpiredRefreshToken] successfully cleaned up expired refresh token")
+			}
+
+		}
+	}
 }

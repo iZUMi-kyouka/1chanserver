@@ -54,7 +54,7 @@ func ToResponse(c *gin.Context, e error) {
 	if errors.As(e, &currentErr) {
 		if currentErr.Message() == "" {
 			c.JSON(currentErr.HTTPStatus(), gin.H{
-				"description": currentErr})
+				"description": currentErr.error.Error()})
 		} else {
 			c.JSON(currentErr.HTTPStatus(), gin.H{
 				"message":     currentErr.Message(),

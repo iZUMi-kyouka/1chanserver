@@ -205,12 +205,13 @@ func Edit(c *gin.Context) {
 	}
 
 	editedThread.UserID = userID
+	curTime := time.Now()
 	query := "UPDATE threads SET " +
 		"title = :title," +
 		"original_post = :original_post," +
 		"updated_date = :updated_date" +
 		"WHERE id = :id AND user_id = :user_id"
-	editedThread.UpdatedDate = time.Now()
+	editedThread.UpdatedDate = &curTime
 
 	_, err = db.NamedExec(query, editedThread)
 	if err != nil {

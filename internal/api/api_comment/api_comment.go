@@ -40,7 +40,8 @@ func Edit(c *gin.Context) {
 	}
 
 	comment.UserID = userID
-	comment.UpdatedDate = time.Now()
+	curTime := time.Now()
+	comment.UpdatedDate = &curTime
 	query := "UPDATE comments SET " +
 		"comment = :comment, " +
 		"updated_date = :updated_date " +

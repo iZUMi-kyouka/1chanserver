@@ -9,19 +9,19 @@ import (
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/jmoiron/sqlx"
 	"log"
 	"net/http"
 )
 
 func Auth() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		db := c.MustGet("db").(*sqlx.DB)
+		//db := c.MustGet("db").(*sqlx.DB)
 
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
 			c.Error(
-				api_error.New(errors.New("authorization header missing"), http.StatusUnauthorized, ""))
+				api_error.NewFromStr("authorization header missing", http.StatusUnauthorized))
+			c.Abort()
 			return
 		}
 
@@ -46,6 +46,7 @@ func Auth() gin.HandlerFunc {
 		default:
 			c.Header("X-RefreshToken", "true")
 			c.Error(api_error.NewFromStr("please relogin", http.StatusUnauthorized))
+			c.Abort()
 			return
 			//case err.Error() == "parsedToken has invalid claims: parsedToken is expired" && ok:
 			//	refreshToken := c.GetHeader("Refresh-Token")
@@ -87,17 +88,20 @@ func AuthResourceOwnership() gin.HandlerFunc {
 		err := c.ShouldBindJSON(&resource)
 		if err != nil {
 			c.Error(err)
+			c.Abort()
 			return
 		}
 
 		protectedResource, ok := resource.(models.Protected)
 		if !ok {
 			c.Error(api_error.NewC(errors.New("invalid object"), http.StatusBadRequest))
+			c.Abort()
 			return
 		}
 
 		if !protectedResource.IsOwnedBy(&userID) {
 			c.Error(api_error.NewFromStr("you cannot modify this resource", http.StatusForbidden))
+			c.Abort()
 			return
 		}
 

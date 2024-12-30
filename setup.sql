@@ -18,7 +18,7 @@ CREATE TABLE user_profiles (
     id UUID PRIMARY KEY,
     profile_picture_path TEXT NOT NULL DEFAULT '/public/pf_placeholder.png',
     biodata TEXT NOT NULL DEFAULT 'Hello, I''m using 1chan!',
-    email TEXT,tags,
+    email TEXT,
     post_count INT NOT NULL DEFAULT 0,
     comment_count INT NOT NULL DEFAULT 0,
     preferred_lang app_language NOT NULL DEFAULT 'en',
