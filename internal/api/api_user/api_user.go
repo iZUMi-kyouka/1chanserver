@@ -19,6 +19,12 @@ import (
 func Register(c *gin.Context) {
 	db := c.MustGet("db").(*sqlx.DB)
 
+	deviceID := c.GetHeader("Device-ID")
+	if deviceID == "" {
+		c.Error(api_error.NewFromStr("missing device ID", http.StatusBadRequest))
+		return
+	}
+
 	newUser, err := utils_handler.GetObj[models.User](c)
 	if err != nil {
 		c.Error(api_error.NewC(err, http.StatusBadRequest))
@@ -68,7 +74,7 @@ func Register(c *gin.Context) {
 		newUser.ID,
 		time.Now().UTC().Format("2006-01-02 15:04:05"))
 
-	err = utils_db.InsertRefreshToken(&newUser, hashedRefreshToken, time.Now().UTC().Add(utils_auth.JWT_REFRESH_TOKEN_EXPIRATION), db)
+	err = utils_db.InsertRefreshToken(&newUser, hashedRefreshToken, time.Now().UTC().Add(utils_auth.JWT_REFRESH_TOKEN_EXPIRATION), deviceID, db)
 	if err != nil {
 		c.Error(err)
 		return
@@ -86,6 +92,13 @@ func Register(c *gin.Context) {
 
 func Login(c *gin.Context) {
 	db := c.MustGet("db").(*sqlx.DB)
+	deviceID := c.GetHeader("Device-ID")
+
+	if deviceID == "" {
+		c.Error(api_error.NewFromStr("missing device ID", http.StatusBadRequest))
+		return
+	}
+
 	tx, err := db.Beginx()
 	if err != nil {
 		c.Error(err)
@@ -132,19 +145,50 @@ func Login(c *gin.Context) {
 		return
 	}
 
-	accessToken, err := utils_auth.GenerateAccessToken(loginUser.ID)
+	accessToken, err := utils_auth.GenerateAccessToken(storedUser.ID)
 	if err != nil {
 		c.Error(err)
 		return
 	}
 
-	refreshToken, err := utils_auth.GenerateRefreshToken(loginUser.ID)
+	var refreshToken string
+	var hasRefreshToken int
+	err = db.Get(&hasRefreshToken,
+		"SELECT COUNT(*) FROM refresh_tokens WHERE user_id = $1 AND device_id = $2",
+		storedUser.ID, deviceID)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+
+	if hasRefreshToken != 0 {
+		_, err = tx.Exec(
+			"DELETE FROM refresh_tokens WHERE user_id = $1 AND device_id = $2",
+			storedUser.ID, deviceID)
+
+		if err != nil {
+			c.Error(err)
+			return
+		}
+	}
+
+	refreshToken, err = utils_auth.GenerateRefreshToken(storedUser.ID)
 	if err != nil {
 		c.Error(err)
 		return
 	}
 
 	hashedRefreshToken := utils_auth.HashRefreshToken(refreshToken)
+
+	_, err = tx.Exec(
+		"INSERT INTO refresh_tokens(user_id, token_hash, expiration_date, device_id) VALUES ($1, $2, $3, $4)",
+		storedUser.ID,
+		hashedRefreshToken,
+		time.Now().UTC().Add(utils_auth.JWT_REFRESH_TOKEN_EXPIRATION), deviceID)
+	if err != nil {
+		c.Error(err)
+		return
+	}
 
 	_, err = tx.Exec("UPDATE user_profiles SET last_login = $1 WHERE id = $2",
 		time.Now().UTC(), storedUser.ID)
@@ -153,24 +197,42 @@ func Login(c *gin.Context) {
 		return
 	}
 
-	_, err = db.Exec(
-		"INSERT INTO refresh_tokens(user_id, token_hash, expiration_date) VALUES ($1, $2, $3)",
-		loginUser.ID,
-		hashedRefreshToken,
-		time.Now().UTC().Add(utils_auth.JWT_REFRESH_TOKEN_EXPIRATION))
+	c.SetCookie("Refresh-Token", refreshToken, 3600*24*14, "/", "", false, true)
+
+	c.JSON(http.StatusOK, gin.H{
+		"uuid":     storedUser.ID,
+		"username": storedUser.Username,
+		"account": gin.H{
+			"id":           storedUser.ID,
+			"username":     storedUser.Username,
+			"access_token": accessToken,
+		},
+		"refresh_token": refreshToken,
+	})
+}
+
+func Logout(c *gin.Context) {
+	db := c.MustGet("db").(*sqlx.DB)
+	refreshToken, err := c.Cookie("Refresh-Token")
+	userID := c.MustGet("UserID").(uuid.UUID)
+	deviceID := c.GetHeader("Device-ID")
+
 	if err != nil {
-		c.Error(err)
+		c.Error(api_error.NewC(err, http.StatusBadRequest))
+		c.Abort()
 		return
 	}
 
-	utils_auth.SetAccessAndRefreshToken(c, refreshToken, accessToken)
+	_, err = db.Exec("DELETE FROM refresh_tokens WHERE token_hash = $1 AND user_id = $2 AND device_id = $3",
+		refreshToken, userID, deviceID)
+	if err != nil {
+		c.Error(err)
+		c.Abort()
+		return
+	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"uuid":          storedUser.ID,
-		"username":      storedUser.Username,
-		"refresh_token": refreshToken,
-		"access_token":  accessToken,
-	})
+	c.SetCookie("Refresh-Token", "", 0, "/", "*", false, true)
+	c.Status(http.StatusOK)
 }
 
 func UpdateProfile(c *gin.Context) {

@@ -14,6 +14,7 @@ func HealthCheck(c *gin.Context) {
 func AuthCheck(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": "You are authorised.",
+		"userID":  c.MustGet("UserID"),
 	})
 }
 
@@ -24,5 +25,12 @@ func ReflectPath(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{
 		"required": required,
 		"optional": optional,
+	})
+}
+
+func DummyUser(c *gin.Context) {
+	c.JSON(http.StatusCreated, gin.H{
+		"id":       1234,
+		"username": "kyo72",
 	})
 }

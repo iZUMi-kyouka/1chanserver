@@ -19,7 +19,7 @@ import (
 )
 
 type Claims struct {
-	UserID uuid.UUID `json:"id"`
+	UserID uuid.UUID
 	jwt.RegisteredClaims
 }
 
@@ -57,13 +57,13 @@ func formatHash(salt []byte, hashedPassword []byte) string {
 // of a hashed password in string format, where the Argon2 hash and
 // salt is base64-encoded, and returns the memory, time, and time parameter
 // used to generate the hash, as well as the base64-encoded hash and salt.
-func parsePasswordHashStdForm(passwordHash *string) (
+func parsePasswordHashStdForm(passwordHash string) (
 	uint32, uint32, uint8, string, string, error) {
 	pattern := fmt.Sprintf(
 		"^\\$argon2id\\$v=%d\\$m=(\\d+),t=(\\d+),p=(\\d+)\\$([A-Za-z0-9+/=]+)\\$([A-Za-z0-9+/=]+)$",
 		uint32(argon2.Version))
 	regex := regexp.MustCompile(pattern)
-	matches := regex.FindStringSubmatch(*passwordHash)
+	matches := regex.FindStringSubmatch(passwordHash)
 
 	if matches == nil {
 		return 0, 0, 0, "", "", errors.New("Invalid argon2 hash format.")
@@ -106,7 +106,7 @@ func GenerateArgon2Hash(payload string) string {
 // hash of the payload matches storedHash. Note that storedHash must be in the
 // standard representation of Argon2Hash (i.e. the output of GenerateArgon2Hash)
 func VerifyArgon2Hash(payload string, storedHash string) bool {
-	arg2Mem, arg2Time, arg2Threads, salt, expectedHash, err := parsePasswordHashStdForm(&storedHash)
+	arg2Mem, arg2Time, arg2Threads, salt, expectedHash, err := parsePasswordHashStdForm(storedHash)
 	if err != nil {
 		return false
 	}
@@ -119,7 +119,7 @@ func VerifyArgon2Hash(payload string, storedHash string) bool {
 	computedHash := base64.RawStdEncoding.EncodeToString(
 		argon2.IDKey([]byte(payload), decodedSalt, arg2Time, arg2Mem, arg2Threads, ARGON2_KEYLENGTH))
 
-	log.Printf("computedHash: %s | storedHash: %s", computedHash, expectedHash)
+	log.Printf(">> computedHash: %s | expectedHash: %s", computedHash, expectedHash)
 	return computedHash == expectedHash
 }
 
@@ -157,9 +157,9 @@ func HashRefreshToken(refreshToken string) string {
 	return formatHash(salt, hash)
 }
 
-func ValidateRefreshToken(db *sqlx.DB, userID uuid.UUID, givenRefreshToken string) error {
+func ValidateRefreshToken(db *sqlx.DB, userID uuid.UUID, givenRefreshToken string, deviceID string) error {
 	storedHash, err := utils_db.FetchOne[string](
-		db, "SELECT token_hash FROM refresh_tokens WHERE user_id = $1", userID)
+		db, "SELECT token_hash FROM refresh_tokens WHERE user_id = $1 AND device_id = $2", userID, deviceID)
 
 	if err != nil {
 		return err

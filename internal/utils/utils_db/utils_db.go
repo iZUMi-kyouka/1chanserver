@@ -53,13 +53,13 @@ func DeleteUser(userID *uuid.UUID, db *sqlx.DB) error {
 	return err
 }
 
-func InsertRefreshToken(user *models.User, refreshTokenHash string, expirationDate time.Time, db *sqlx.DB) error {
+func InsertRefreshToken(user *models.User, refreshTokenHash string, expirationDate time.Time, devcieID string, db *sqlx.DB) error {
 	_, err := db.Exec(
-		"INSERT INTO refresh_tokens(user_id, token_hash, expiration_date) VALUES ($1, $2, $3)",
+		"INSERT INTO refresh_tokens(user_id, token_hash, expiration_date, device_id) VALUES ($1, $2, $3, $4)",
 		user.ID,
 		refreshTokenHash,
 		expirationDate,
-	)
+		devcieID)
 	return err
 }
 

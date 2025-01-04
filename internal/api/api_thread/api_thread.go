@@ -178,6 +178,10 @@ func List(page int) gin.HandlerFunc {
 			return
 		}
 
+		for i := 0; i < len(threadList); i++ {
+			threadList[i].OriginalPost = threadList[i].OriginalPost[:200]
+		}
+
 		threadCount, err := utils_db.FetchOne[int](db, "SELECT COUNT(*) FROM threads")
 		if err != nil {
 			c.Status(http.StatusInternalServerError)

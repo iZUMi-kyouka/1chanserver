@@ -15,7 +15,6 @@ import (
 
 func Auth() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		//db := c.MustGet("db").(*sqlx.DB)
 
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
@@ -35,11 +34,11 @@ func Auth() gin.HandlerFunc {
 			return []byte(utils_auth.JWT_SECRET_KEY), nil
 		})
 
-		claims, ok := parsedToken.Claims.(*utils_auth.Claims)
+		claims, _ := parsedToken.Claims.(*utils_auth.Claims)
 
-		log.Printf("parsedToken: %s; err: %s; claims: %v; ok: %s", parsedToken, err, claims, ok)
+		log.Printf("parsedToken: %s; err: %s; claims: %v;", parsedToken, err, claims)
 		switch {
-		case err == nil && ok && parsedToken.Valid:
+		case err == nil && parsedToken.Valid:
 			log.Printf("Access token is valid.")
 			c.Set("UserID", claims.UserID)
 			c.Next()
@@ -48,33 +47,6 @@ func Auth() gin.HandlerFunc {
 			c.Error(api_error.NewFromStr("please relogin", http.StatusUnauthorized))
 			c.Abort()
 			return
-			//case err.Error() == "parsedToken has invalid claims: parsedToken is expired" && ok:
-			//	refreshToken := c.GetHeader("Refresh-Token")
-			//
-			//	if refreshToken == "" {
-			//		c.Error(api_error.New(errors.New("refresh token missing"), http.StatusUnauthorized, ""))
-			//		return
-			//	}
-			//
-			//	log.Printf("Retrieving refresh token of user with id: %v\n", claims.UserID)
-			//
-			//	err = utils_auth.ValidateRefreshToken(db, claims.UserID, refreshToken)
-			//	if err != nil {
-			//		c.Error(api_error.New(errors.New("refresh token invalid"), http.StatusUnauthorized, ""))
-			//		return
-			//	}
-			//
-			//	newAccessToken, err := utils_auth.GenerateAccessToken(claims.UserID)
-			//	if err != nil {
-			//		c.Error(err)
-			//		return
-			//	}
-			//
-			//	c.SetCookie("Authorization", fmt.Sprintf("Bearer %s", newAccessToken), 60*10, "/", "", false, false)
-			//	c.Set("UserID", claims.UserID)
-			//	c.Next()
-			//default:
-			//	c.Error(api_error.New(errors.New("access token invalid"), http.StatusUnauthorized, ""))
 		}
 	}
 }

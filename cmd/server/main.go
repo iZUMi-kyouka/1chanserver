@@ -12,6 +12,7 @@ import (
 	"1chanserver/internal/models/api_error"
 	"errors"
 	"fmt"
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/jmoiron/sqlx"
 	"log"
@@ -23,10 +24,16 @@ func main() {
 	database.InitDB()
 
 	r := gin.Default()
+
+	config := cors.DefaultConfig()
+	config.AddAllowHeaders("Authorization", "Device-ID")
+	config.AllowCredentials = true
+	config.AllowOrigins = []string{"http://localhost:3000"}
+	r.Use(cors.New(config))
+
 	r.Use(
 		middleware.PanicRecovery(),
 		middleware.RequestIDProvider(),
-		middleware.CORS(),
 		middleware.ErrorLogging(),
 		middleware.ErrorHandler())
 	r.Use(func(c *gin.Context) {
@@ -49,16 +56,16 @@ func main() {
 
 		users := v1.Group("/users")
 		{
-			usersAuth := users.Group("/")
+			usersAuth := users.Group("/", middleware.Auth())
 			{
-				usersAuth.GET("/placeholder", func(c *gin.Context) {
-					c.Status(200)
-				})
+				usersAuth.GET("/logout", api_user.Logout)
+
 			}
 
 			users.POST("/login", api_user.Login)
 			users.POST("/register", api_user.Register)
-			users.GET("/refresh", api_token.RefreshToken())
+			users.GET("/refresh_new", api_token.RefreshToken("first"))
+			users.GET("/refresh", api_token.RefreshToken("continue"))
 		}
 
 		threads := v1.Group("/threads")
@@ -74,7 +81,8 @@ func main() {
 
 			threads.GET("/view/:threadID", api_thread.View(1))
 			threads.GET("/view/:threadID/:page", api_thread.View(1))
-			threads.GET("/list/:rank", api_thread.List(1))
+			threads.GET("/list/:rank", api_thread.
+				List(1))
 			threads.GET("/list/:rank/:page", api_thread.List(1))
 			threads.GET("/search/:searchQuery", api_thread.Search(1))
 			threads.GET("/search/:searchQuery/:page", api_thread.Search(1))

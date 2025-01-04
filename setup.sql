@@ -6,6 +6,7 @@ CREATE DATABASE forum;
 
 CREATE TYPE app_language AS ENUM ('en', 'id', 'ja');
 CREATE TYPE app_theme AS ENUM ('light', 'dark', 'auto');
+CREATE TYPE notification_type AS ENUM ('admin', 'thread', 'dm');
 
 -- Users
 CREATE TABLE users (
@@ -28,13 +29,25 @@ CREATE TABLE user_profiles (
     FOREIGN KEY (id) REFERENCES users(id) ON DELETE CASCADE
 );
 
+CREATE TABLE notifications (
+    id BIGSERIAL PRIMARY KEY,
+    user_id UUID NOT NULL,
+    related_id BIGINT,
+    type notification_type NOT NULL,
+    message TEXT,
+    creation_date TIMESTAMPTZ DEFAULT NOW(),
+    acknowledged_date TIMESTAMPTZ,
+    FOREIGN KEY (user_id) REFERENCES users(id),
+);
+
 -- Authorisation
 
 CREATE TABLE refresh_tokens (
     id BIGSERIAL PRIMARY KEY,
     user_id UUID NOT NULL,
+    device_id TEXT NOT NULL,
     token_hash TEXT NOT NULL,
-    expiration_date TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expiration_date TIMESTAMPTZ NOT NULL,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
