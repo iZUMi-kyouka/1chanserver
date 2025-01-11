@@ -7,7 +7,7 @@ import (
 
 type Comment struct {
 	ID           int64      `json:"id" db:"id"`
-	ThreadID     int64      `json:"thread_id" db:"thread_id"`
+	ThreadID     uuid.UUID  `json:"thread_id" db:"thread_id"`
 	UserID       uuid.UUID  `json:"user_id" db:"user_id"`
 	Comment      string     `json:"comment" db:"comment"`
 	CreationDate time.Time  `json:"creation_date" db:"creation_date"`

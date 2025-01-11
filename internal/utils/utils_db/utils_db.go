@@ -2,8 +2,10 @@ package utils_db
 
 import (
 	"1chanserver/internal/models"
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
+	"log"
 	"time"
 )
 
@@ -87,4 +89,25 @@ func DeleteComment(comment *models.Comment, db *sqlx.DB) error {
 	query := "DELETE FROM comments WHERE id = $1"
 	_, err := db.Exec(query, comment.ID)
 	return err
+}
+
+func HandleTxRollback(tx *sqlx.Tx, err *error, c *gin.Context) {
+	if p := recover(); p != nil {
+		err := tx.Rollback()
+		if err != nil {
+			log.Fatalf("failed to rollback db: %s", err.Error())
+		}
+		panic(p)
+	} else if *err != nil {
+		log.Printf("error detected: %s", *err)
+		err := tx.Rollback()
+		if err != nil {
+			log.Fatalf("failed to rollback db: %s", err.Error())
+		}
+	} else {
+		err := tx.Commit()
+		if err != nil {
+			c.Error(err)
+		}
+	}
 }

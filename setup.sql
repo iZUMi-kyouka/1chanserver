@@ -7,6 +7,7 @@ CREATE DATABASE forum;
 CREATE TYPE app_language AS ENUM ('en', 'id', 'ja');
 CREATE TYPE app_theme AS ENUM ('light', 'dark', 'auto');
 CREATE TYPE notification_type AS ENUM ('admin', 'thread', 'dm');
+CREATE TYPE report_status AS ENUM ('pending', 'resolved');
 
 -- Users
 CREATE TABLE users (
@@ -37,7 +38,7 @@ CREATE TABLE notifications (
     message TEXT,
     creation_date TIMESTAMPTZ DEFAULT NOW(),
     acknowledged_date TIMESTAMPTZ,
-    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
 -- Authorisation
@@ -61,7 +62,7 @@ CREATE TABLE channels (
 
 -- Threads
 CREATE TABLE threads (
-    id BIGSERIAL PRIMARY KEY,
+    id UUID PRIMARY KEY,
     user_id UUID NOT NULL,
     channel_id BIGINT,
     title TEXT NOT NULL,
@@ -80,7 +81,7 @@ CREATE TABLE threads (
 -- Comments
 CREATE TABLE comments (
     id BIGSERIAL PRIMARY KEY,
-    thread_id BIGINT NOT NULL,
+    thread_id UUID NOT NULL,
     user_id UUID NOT NULL,
     comment TEXT NOT NULL,
     creation_date TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -90,6 +91,72 @@ CREATE TABLE comments (
     search_vector tsvector NOT NULL,
     FOREIGN KEY (thread_id) REFERENCES threads(id) ON DELETE CASCADE,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- Polls
+CREATE TABLE polls (
+    id BIGSERIAL PRIMARY KEY,
+    thread_id UUID NOT NULL,
+    question TEXT NOT NULL,
+    creation_date TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    max_choice INT NOT NULL DEFAULT 1,
+    FOREIGN KEY (thread_id) REFERENCES threads(id)
+);
+
+CREATE TABLE poll_options (
+    poll_id BIGINT NOT NULL,
+    option_id INT NOT NULL,
+    option_text TEXT NOT NULL,
+    vote_count INT NOT NULL DEFAULT 0,
+    PRIMARY KEY (poll_id, option_id),
+    FOREIGN KEY (poll_id) REFERENCES polls(id)
+);
+
+CREATE TABLE user_poll_votes (
+    user_id UUID NOT NULL,
+    poll_id BIGINT NOT NULL,
+    poll_option_id INT NOT NULL,
+    PRIMARY KEY (user_id, poll_id, poll_option_id),
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (poll_id) REFERENCES polls(id),
+    FOREIGN KEY (poll_id, poll_option_id) REFERENCES poll_options(poll_id, option_id)
+);
+
+-- Direct Messaging
+CREATE TABLE direct_messages (
+    user_a_id UUID NOT NULL,
+    user_b_id UUID NOT NULL,
+    creation_date TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_a_id, user_b_id),
+    CONSTRAINT consistent_parties CHECK (user_a_id < user_b_id),
+    FOREIGN KEY (user_a_id) REFERENCES users(id),
+    FOREIGN KEY (user_b_id) REFERENCES users(id)
+);
+
+CREATE TABLE messages (
+    sender_id UUID NOT NULL,
+    recipient_id UUID NOT NULL,
+    content TEXT NOT NULL,
+    creation_date TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (sender_id, recipient_id, creation_date)
+);
+
+-- Reports
+CREATE TABLE reports (
+    id BIGSERIAL PRIMARY KEY,
+    thread_id UUID,
+    comment_id BIGINT,
+    reporter_id UUID NOT NULL,
+    moderator_id UUID NOT NULL,
+    report_reason report_status NOT NULL,
+    actions_taken TEXT,
+    creation_date TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    resolved_date TIMESTAMPTZ,
+    FOREIGN KEY (reporter_id) REFERENCES users(id),
+    FOREIGN KEY (moderator_id) REFERENCES users(id),
+    FOREIGN KEY (thread_id) REFERENCES threads(id),
+    FOREIGN KEY (comment_id) REFERENCES comments(id),
+    CHECK (thread_id IS NOT NULL OR comment_id IS NOT NULL)
 );
 
 CREATE INDEX comments_search_vector_idx ON comments USING gin(search_vector);
@@ -156,7 +223,7 @@ CREATE TABLE user_comment_likes (
 
 CREATE TABLE user_thread_likes (
     user_id UUID,
-    thread_id BIGINT,
+    thread_id UUID,
     variant SMALLINT NOT NULL CHECK (variant IN (0, 1)),
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
     FOREIGN KEY (thread_id) REFERENCES threads(id) ON DELETE CASCADE,
@@ -206,7 +273,7 @@ CREATE TRIGGER user_post_count_update
 EXECUTE FUNCTION update_user_post_count();
 
 CREATE TABLE thread_tags (
-    thread_id BIGINT,
+    thread_id UUID,
     tag_id INT,
     PRIMARY KEY (thread_id, tag_id),
     FOREIGN KEY (thread_id) REFERENCES threads(id) ON DELETE CASCADE,
@@ -214,7 +281,7 @@ CREATE TABLE thread_tags (
 );
 
 CREATE TABLE thread_channels (
-     thread_id BIGINT,
+     thread_id UUID,
      channel_id BIGINT,
      PRIMARY KEY (thread_id, channel_id),
      FOREIGN KEY (thread_id) REFERENCES threads(id) ON DELETE CASCADE,

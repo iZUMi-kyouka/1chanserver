@@ -35,8 +35,8 @@ FROM users u
          JOIN generate_series(1, 10) i ON u.username = CONCAT('user', i);
 
 -- Insert 10 threads
-INSERT INTO threads (user_id, title, original_post, like_count, dislike_count, view_count)
-SELECT u.id,
+INSERT INTO threads (id, user_id, title, original_post, like_count, dislike_count, view_count)
+SELECT gen_random_uuid(), u.id,
        CASE
            WHEN i = 1 THEN 'Best Anime of 2023'
            WHEN i = 2 THEN 'Tips for Visiting Tokyo'
@@ -68,35 +68,45 @@ FROM users u
          JOIN generate_series(1, 10) i ON u.username = CONCAT('user', i);
 
 -- Insert 10 tags
-INSERT INTO tags (tag)
-VALUES
-    ('Anime'), ('Travel'), ('Gaming'), ('Manga'), ('Food'),
-    ('Fitness'), ('AI'), ('Movies'), ('Sci-Fi'), ('Multiplayer');
-
--- Insert thread tags
-INSERT INTO thread_tags (thread_id, tag_id)
-SELECT t.id, g.i
-FROM threads t, generate_series(1, 10) g(i)
-WHERE t.id = g.i;
+INSERT INTO tags (id, tag) VALUES
+   (0, 'Technology'),
+   (1, 'Gaming'),
+   (2, 'Entertainment'),
+   (3, 'Lifestyle'),
+   (4, 'Education'),
+   (5, 'Community'),
+   (6, 'Business'),
+   (7, 'Hobbies'),
+   (8, 'Science'),
+   (9, 'Sports'),
+   (10, 'Creative Arts'),
+   (11, 'Politics'),
+   (12, 'DIY & Crafting'),
+   (13, 'Automobiles'),
+   (14, 'Pets & Animals'),
+   (15, 'Health & Wellness'),
+   (16, 'Work & Productivity'),
+   (17, 'Travel'),
+   (18, 'Food & Drinks');
 
 -- Insert 10 comments for each thread
-INSERT INTO comments (thread_id, user_id, comment, like_count, dislike_count)
-SELECT t.id,
-       u.id,
-       CASE
-           WHEN t.title = 'Best Anime of 2023' THEN 'Demon Slayer was amazing this year!'
-           WHEN t.title = 'Tips for Visiting Tokyo' THEN 'Tokyo Tower is a must-visit.'
-           WHEN t.title = 'Hottest Gaming Gear This Year' THEN 'The new Corsair keyboard is awesome.'
-           WHEN t.title = 'Exploring Manga Classics' THEN 'One Piece has been incredible lately.'
-           WHEN t.title = 'Must-Try Japanese Snacks' THEN 'Matcha KitKats are my favorite.'
-           WHEN t.title = 'How to Stay Motivated for Fitness' THEN 'Staying consistent is key.'
-           WHEN t.title = 'The Role of AI in Modern Life' THEN 'AI will change how we work and live.'
-           WHEN t.title = 'Travel Tips for First-Time Japan Visitors' THEN 'Get a JR Pass to save on train travel.'
-           WHEN t.title = 'Underrated Sci-Fi Movies to Watch' THEN '"Ex Machina" is brilliant.'
-           ELSE 'Communication is the key to winning.'
-           END,
-       FLOOR(RANDOM() * 20),
-       FLOOR(RANDOM() * 5)
-FROM threads t
-         JOIN users u ON u.username = CONCAT('user', ((t.id - 1) % 10) + 1)
-ORDER BY t.id, u.username;
+-- INSERT INTO comments (thread_id, user_id, comment, like_count, dislike_count)
+-- SELECT t.id,
+--        u.id,
+--        CASE
+--            WHEN t.title = 'Best Anime of 2023' THEN 'Demon Slayer was amazing this year!'
+--            WHEN t.title = 'Tips for Visiting Tokyo' THEN 'Tokyo Tower is a must-visit.'
+--            WHEN t.title = 'Hottest Gaming Gear This Year' THEN 'The new Corsair keyboard is awesome.'
+--            WHEN t.title = 'Exploring Manga Classics' THEN 'One Piece has been incredible lately.'
+--            WHEN t.title = 'Must-Try Japanese Snacks' THEN 'Matcha KitKats are my favorite.'
+--            WHEN t.title = 'How to Stay Motivated for Fitness' THEN 'Staying consistent is key.'
+--            WHEN t.title = 'The Role of AI in Modern Life' THEN 'AI will change how we work and live.'
+--            WHEN t.title = 'Travel Tips for First-Time Japan Visitors' THEN 'Get a JR Pass to save on train travel.'
+--            WHEN t.title = 'Underrated Sci-Fi Movies to Watch' THEN '"Ex Machina" is brilliant.'
+--            ELSE 'Communication is the key to winning.'
+--            END,
+--        FLOOR(RANDOM() * 20),
+--        FLOOR(RANDOM() * 5)
+-- FROM threads t
+--          JOIN users u ON u.username = CONCAT('user', ((t.id - 1) % 10) + 1)
+-- ORDER BY t.id, u.username;

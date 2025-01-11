@@ -83,7 +83,12 @@ func Register(c *gin.Context) {
 	utils_auth.SetAccessAndRefreshToken(c, refreshToken, accessToken)
 
 	c.JSON(http.StatusOK, gin.H{
-		"uuid":          newUser.ID,
+		"uuid": newUser.ID,
+		"account": gin.H{
+			"id":           newUser.ID,
+			"username":     newUser.Username,
+			"access_token": accessToken,
+		},
 		"username":      newUser.Username,
 		"refresh_token": refreshToken,
 		"access_token":  accessToken,
@@ -105,25 +110,7 @@ func Login(c *gin.Context) {
 		return
 	}
 
-	defer func() {
-		if p := recover(); p != nil {
-			err := tx.Rollback()
-			if err != nil {
-				log.Fatalf("failed to rollback db: %s", err.Error())
-			}
-			panic(p)
-		} else if err != nil {
-			err := tx.Rollback()
-			if err != nil {
-				log.Fatalf("failed to rollback db: %s", err.Error())
-			}
-		} else {
-			err = tx.Commit()
-			if err != nil {
-				c.Error(err)
-			}
-		}
-	}()
+	defer utils_db.HandleTxRollback(tx, &err, c)
 
 	loginUser, err := utils_handler.GetObj[models.User](c)
 	if err != nil {

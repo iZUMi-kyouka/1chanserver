@@ -3,6 +3,7 @@ package main
 import (
 	"1chanserver/internal/api/api_comment"
 	"1chanserver/internal/api/api_dev"
+	"1chanserver/internal/api/api_files"
 	"1chanserver/internal/api/api_thread"
 	"1chanserver/internal/api/api_token"
 	"1chanserver/internal/api/api_user"
@@ -10,17 +11,32 @@ import (
 	_ "1chanserver/internal/database"
 	"1chanserver/internal/middleware"
 	"1chanserver/internal/models/api_error"
+	"1chanserver/internal/routes"
+	"1chanserver/internal/utils/utils_auth"
 	"errors"
 	"fmt"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/jmoiron/sqlx"
+	"github.com/joho/godotenv"
 	"log"
+	"os"
 	"time"
 )
 
 func main() {
+
 	fmt.Println("Starting server...")
+	err := godotenv.Load()
+	if err != nil {
+		log.Fatal("Error loading .env file")
+	}
+
+	routes.BaseAPI = os.Getenv("BASE_API")
+	routes.BaseURL = os.Getenv("BASE_URL")
+	routes.APIRoot = routes.BaseURL + routes.BaseAPI
+	utils_auth.JWT_SECRET_KEY = []byte(os.Getenv("JWT_SECRET_KEY"))
+
 	database.InitDB()
 
 	r := gin.Default()
@@ -81,11 +97,10 @@ func main() {
 
 			threads.GET("/view/:threadID", api_thread.View(1))
 			threads.GET("/view/:threadID/:page", api_thread.View(1))
-			threads.GET("/list/:rank", api_thread.
-				List(1))
-			threads.GET("/list/:rank/:page", api_thread.List(1))
-			threads.GET("/search/:searchQuery", api_thread.Search(1))
-			threads.GET("/search/:searchQuery/:page", api_thread.Search(1))
+			threads.GET("/list", api_thread.List())
+			threads.GET("/search", api_thread.Search())
+			threads.GET("/tags", api_thread.Tags)
+
 		}
 
 		comments := v1.Group("/comments")
@@ -99,9 +114,17 @@ func main() {
 				commentsAuth.POST("/dislike/:objID", api_comment.HandleLikeDislike(0, "user_comment_likes"))
 			}
 
-			comments.GET("/")
+			comments.GET("/:threadID")
 		}
 
+		upload := v1.Group("/upload")
+		{
+			//uploadAuth := upload.Group("/", middleware.Auth())
+			upload.POST("/image", api_files.Upload("image"))
+
+		}
+
+		r.Static("/files", "./public/uploads")
 	}
 
 	stop := make(chan struct{})

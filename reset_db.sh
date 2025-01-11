@@ -14,6 +14,7 @@ fi
 # Execute the psql command
 echo "Running SQL script: $SQL_FILE..."
 psql -U "$PSQL_USER" -d "$PSQL_DB" -f "$SQL_FILE"
+psql -U "$PSQL_USER" -d "forum" -f "sample_data.sql"
 
 # Check exit status
 if [ $? -eq 0 ]; then

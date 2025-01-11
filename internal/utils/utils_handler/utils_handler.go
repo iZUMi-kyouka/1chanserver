@@ -9,7 +9,7 @@ import (
 )
 
 func GetReqCx(c *gin.Context) (*sqlx.DB, uuid.UUID) {
-	return c.MustGet("DB").(*sqlx.DB), c.MustGet("UserID").(uuid.UUID)
+	return c.MustGet("db").(*sqlx.DB), c.MustGet("UserID").(uuid.UUID)
 }
 
 func GetObj[T any](c *gin.Context) (T, error) {
