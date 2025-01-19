@@ -6,6 +6,11 @@ type Pagination struct {
 	PageSize    int `json:"page_size"`
 }
 
+type PaginatedResponse[T any] struct {
+	Pagination Pagination `json:"pagination"`
+	Response   []T        `json:"response"`
+}
+
 const (
 	DEFAULT_PAGE_SIZE = 100
 )

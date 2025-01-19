@@ -17,7 +17,7 @@ func Auth() gin.HandlerFunc {
 	return func(c *gin.Context) {
 
 		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
+		if authHeader == "" || authHeader == "Bearer" {
 			c.Error(
 				api_error.NewFromStr("authorization header missing", http.StatusUnauthorized))
 			c.Abort()

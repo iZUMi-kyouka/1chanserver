@@ -6,6 +6,8 @@ import (
 	"1chanserver/internal/utils/utils_auth"
 	"1chanserver/internal/utils/utils_db"
 	"1chanserver/internal/utils/utils_handler"
+	"database/sql"
+	"errors"
 	"github.com/jmoiron/sqlx"
 	"log"
 	"time"
@@ -40,6 +42,15 @@ func Register(c *gin.Context) {
 		newUser.Username,
 		newUser.Password,
 	)
+	if err != nil {
+		if utils_db.CheckDuplicateError(err) {
+			c.Error(api_error.NewFromStr("username already exists", http.StatusConflict))
+			return
+		} else {
+			c.Error(err)
+			return
+		}
+	}
 
 	curTime := time.Now().UTC()
 
@@ -120,6 +131,11 @@ func Login(c *gin.Context) {
 
 	storedUser, err := utils_db.GetUserByUsername(&loginUser.Username, db)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			c.Error(api_error.NewFromStr("invalid username or password", http.StatusUnauthorized))
+			return
+		}
+
 		c.Error(err)
 		return
 	}
@@ -242,6 +258,20 @@ func UpdateProfile(c *gin.Context) {
 	return
 }
 
+func GetProfile() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		db, userID := utils_handler.GetReqCx(c)
+		profile, err := utils_db.FetchOne[models.UserProfile](
+			db, "SELECT * FROM user_profiles WHERE id = $1", userID)
+		if err != nil {
+			c.Error(err)
+			return
+		}
+
+		c.JSON(http.StatusOK, profile)
+	}
+}
+
 func Delete(c *gin.Context) {
 	db, userID := utils_handler.GetReqCx(c)
 	err := utils_db.DeleteUser(&userID, db)
@@ -253,4 +283,112 @@ func Delete(c *gin.Context) {
 
 	c.Status(http.StatusOK)
 	return
+}
+
+func Likes(c *gin.Context) {
+	db, userID := utils_handler.GetReqCx(c)
+	query := `
+		SELECT utl.thread_id, utl.variant
+		FROM users u, user_thread_likes utl
+		WHERE u.id = $1 AND utl.user_id = u.id
+	`
+
+	rows, err := db.Queryx(query, userID)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+
+	defer rows.Close()
+
+	likes := make(map[string]map[int]int)
+	likes["threads"] = make(map[int]int)
+	likes["comments"] = make(map[int]int)
+
+	for rows.Next() {
+		var threadID int
+		var variant int
+		if err := rows.Scan(&threadID, &variant); err != nil {
+			c.Error(err)
+			return
+		}
+		likes["threads"][threadID] = variant
+	}
+
+	query = `
+		SELECT ucl.comment_id, ucl.variant
+		FROM users u, user_comment_likes ucl
+		WHERE u.id = $1 AND ucl.user_id = u.id
+	`
+
+	rows, err = db.Queryx(query, userID)
+
+	for rows.Next() {
+		var commentID int
+		var variant int
+		if err := rows.Scan(&commentID, &variant); err != nil {
+			c.Error(err)
+			return
+		}
+		likes["comments"][commentID] = variant
+	}
+
+	c.JSON(http.StatusOK, likes)
+}
+
+func Threads() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		db, userID := utils_handler.GetReqCx(c)
+
+		query := `
+		SELECT id FROM threads WHERE user_id = $1
+		`
+
+		rows, err := db.Queryx(query, userID)
+		if err != nil {
+			c.Error(err)
+			return
+		}
+
+		threadIDMap := make(map[int]int)
+
+		for rows.Next() {
+			var threadID int
+			if err := rows.Scan(&threadID); err != nil {
+				c.Error(err)
+				return
+			}
+			threadIDMap[threadID] = 0
+		}
+
+		c.JSON(http.StatusOK, threadIDMap)
+	}
+}
+
+func Comments() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		db, userID := utils_handler.GetReqCx(c)
+
+		query := `
+		SELECT id FROM comments WHERE user_id = $1
+		`
+		rows, err := db.Queryx(query, userID)
+		if err != nil {
+			c.Error(err)
+			return
+		}
+
+		commentIDMap := make(map[int]int)
+
+		for rows.Next() {
+			var commentID int
+			if err := rows.Scan(&commentID); err != nil {
+				c.Error(err)
+				return
+			}
+			commentIDMap[commentID] = 0
+		}
+
+		c.JSON(http.StatusOK, commentIDMap)
+	}
 }

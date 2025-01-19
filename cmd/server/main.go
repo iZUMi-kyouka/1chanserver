@@ -75,7 +75,11 @@ func main() {
 			usersAuth := users.Group("/", middleware.Auth())
 			{
 				usersAuth.GET("/logout", api_user.Logout)
-
+				usersAuth.GET("/likes", api_user.Likes)
+				usersAuth.GET("/profile", api_user.GetProfile())
+				usersAuth.POST("/profile", api_user.UpdateProfile)
+				usersAuth.GET("/threads", api_user.Threads())
+				usersAuth.GET("/comments", api_user.Comments())
 			}
 
 			users.POST("/login", api_user.Login)
@@ -89,14 +93,14 @@ func main() {
 			threadsAuth := threads.Group("/", middleware.Auth())
 			{
 				threadsAuth.POST("/new", api_thread.New)
-				threadsAuth.POST("/like/:objID", api_comment.HandleLikeDislike(1, "user_thread_likes"))
-				threadsAuth.POST("/dislike/:objID", api_comment.HandleLikeDislike(0, "user_thread_likes"))
+				threadsAuth.PUT("/like/:objID", api_comment.HandleLikeDislike(1, "user_thread_likes"))
+				threadsAuth.PUT("/dislike/:objID", api_comment.HandleLikeDislike(0, "user_thread_likes"))
 				threadsAuth.PATCH("/edit", api_thread.Edit)
 				threadsAuth.DELETE("/delete/:threadID", api_thread.Delete)
 			}
 
-			threads.GET("/view/:threadID", api_thread.View(1))
-			threads.GET("/view/:threadID/:page", api_thread.View(1))
+			threads.GET("/:threadID", api_thread.View(1))
+			threads.GET("/:threadID/:page", api_thread.View(1))
 			threads.GET("/list", api_thread.List())
 			threads.GET("/search", api_thread.Search())
 			threads.GET("/tags", api_thread.Tags)
@@ -107,14 +111,22 @@ func main() {
 		{
 			commentsAuth := comments.Group("/", middleware.Auth())
 			{
-				commentsAuth.POST("/new", api_comment.New)
+				commentsAuth.POST("/new/:threadID", api_comment.New)
 				commentsAuth.PATCH("/edit", api_comment.Edit)
 				commentsAuth.DELETE("/delete", api_comment.Delete)
-				commentsAuth.POST("/like/:objID", api_comment.HandleLikeDislike(1, "user_comment_likes"))
-				commentsAuth.POST("/dislike/:objID", api_comment.HandleLikeDislike(0, "user_comment_likes"))
+				commentsAuth.PUT("/like/:objID", api_comment.HandleLikeDislike(1, "user_comment_likes"))
+				commentsAuth.PUT("/dislike/:objID", api_comment.HandleLikeDislike(0, "user_comment_likes"))
 			}
 
 			comments.GET("/:threadID")
+		}
+
+		tags := v1.Group("/tags")
+		{
+			tagsAuth := tags.Group("/", middleware.Auth())
+			{
+				tagsAuth.POST("/new", api_thread.CreateTag)
+			}
 		}
 
 		upload := v1.Group("/upload")

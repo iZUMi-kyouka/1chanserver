@@ -6,28 +6,30 @@ import (
 )
 
 type Thread struct {
-	ID              uuid.UUID  `json:"id" db:"id"`
+	ID              int        `json:"id" db:"id"`
 	UserID          uuid.UUID  `json:"user_id" db:"user_id"`
 	ChannelID       *int64     `json:"channel_id" db:"channel_id"`
 	Title           string     `json:"title" db:"title"`
 	OriginalPost    string     `json:"original_post" db:"original_post"`
 	CreationDate    time.Time  `json:"creation_date" db:"creation_date"`
-	UpdatedDate     *time.Time `json:"update_date" db:"update_date"`
+	UpdatedDate     *time.Time `json:"updated_date" db:"updated_date"`
 	LastCommentDate *time.Time `json:"last_comment_date" db:"last_comment_date""`
 	LikeCount       int        `json:"like_count" db:"like_count"`
 	ViewCount       int        `json:"view_count" db:"view_count"`
 }
 
-type ThreadSnippet struct {
-	ID              uuid.UUID  `json:"id" db:"id"`
+type ThreadView struct {
+	ID              int        `json:"id" db:"id"`
 	Username        string     `json:"username" db:"username"`
 	Channel         string     `json:"channel" db:"channel"`
 	Title           string     `json:"title" db:"title"`
 	OriginalPost    string     `json:"original_post" db:"original_post"`
 	CreationDate    time.Time  `json:"creation_date" db:"creation_date"`
-	UpdatedDate     *time.Time `json:"update_date" db:"update_date"`
+	UpdatedDate     *time.Time `json:"updated_date" db:"updated_date"`
 	LastCommentDate *time.Time `json:"last_comment_date" db:"last_comment_date""`
 	LikeCount       int        `json:"like_count" db:"like_count"`
+	DislikeCount    int        `json:"dislike_count" db:"dislike_count"`
+	CommentCount    int        `json:"comment_count" db:"comment_count"`
 	ViewCount       int        `json:"view_count" db:"view_count"`
 }
 
@@ -48,11 +50,11 @@ type ThreadPagination struct {
 }
 
 type ThreadListResponse struct {
-	Threads     []ThreadSnippet `json:"threads"`
-	Paginations Pagination      `json:"paginations"`
+	Threads     []ThreadView `json:"threads"`
+	Paginations Pagination   `json:"paginations"`
 }
 
 type ThreadViewResponse struct {
-	Thread   Thread          `json:"thread"`
-	Comments CommentResponse `json:"comments_response"`
+	Thread   ThreadView                     `json:"thread"`
+	Comments PaginatedResponse[CommentView] `json:"comments"`
 }

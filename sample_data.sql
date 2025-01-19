@@ -36,7 +36,7 @@ FROM users u
 
 -- Insert 10 threads
 INSERT INTO threads (id, user_id, title, original_post, like_count, dislike_count, view_count)
-SELECT gen_random_uuid(), u.id,
+SELECT i, u.id,
        CASE
            WHEN i = 1 THEN 'Best Anime of 2023'
            WHEN i = 2 THEN 'Tips for Visiting Tokyo'

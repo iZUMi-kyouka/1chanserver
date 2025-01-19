@@ -2,9 +2,11 @@ package utils_db
 
 import (
 	"1chanserver/internal/models"
+	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 	"log"
 	"time"
 )
@@ -38,12 +40,8 @@ func EditUserProfile(userProfile *models.UserProfile, db *sqlx.DB) error {
 		"profile_picture_path = :profile_photo_path," +
 		"biodata = :biodata," +
 		"email = :email," +
-		"post_count = :post_count," +
-		"comment_count = :comment_count," +
 		"preferred_lang = :preferred_lang" +
 		"preferred_theme = :preferred_theme" +
-		"creation_date = :creation_date" +
-		"last_login = :last_login" +
 		"WHERE id = :id"
 	_, err := db.NamedExec(query, userProfile)
 	return err
@@ -110,4 +108,36 @@ func HandleTxRollback(tx *sqlx.Tx, err *error, c *gin.Context) {
 			c.Error(err)
 		}
 	}
+}
+
+func ToInQueryForm[T any](s []T) string {
+	var result string
+	result += "("
+	if len(s) >= 2 {
+		for i := 0; i < len(s)-1; i++ {
+			result += fmt.Sprintf("%d, ", s[i])
+		}
+	}
+
+	result += fmt.Sprintf("%d)", s[len(s)-1])
+	return result
+}
+
+func GetTotalRecordNo(db *sqlx.DB, query string, args ...interface{}) (int, error) {
+	recordNo, err := FetchOne[int](db, query, args)
+	if err != nil {
+		return -1, err
+	}
+
+	return recordNo, nil
+}
+
+func CheckDuplicateError(err error) bool {
+	if err, ok := err.(*pq.Error); ok {
+		if err.Code == "23505" {
+			return true
+		}
+	}
+
+	return false
 }

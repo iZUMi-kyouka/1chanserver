@@ -7,6 +7,8 @@ import (
 	"1chanserver/internal/utils/utils_handler"
 	"fmt"
 	"github.com/gin-gonic/gin"
+	"github.com/jmoiron/sqlx"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -14,15 +16,28 @@ import (
 
 func New(c *gin.Context) {
 	db, userID := utils_handler.GetReqCx(c)
-	comment, err := utils_handler.GetObj[models.Comment](c)
+	threadID := c.Param("threadID")
+	if threadID == "" {
+		c.Error(api_error.NewFromStr("missing thread id", http.StatusBadRequest))
+		return
+	}
+
+	threadIDInt, err := strconv.Atoi(threadID)
+	if err != nil {
+		c.Error(api_error.NewFromStr("invalid thread id", http.StatusBadRequest))
+	}
+
+	var commentRequest map[string]string
+	err = c.ShouldBindJSON(&commentRequest)
 	if err != nil {
 		c.Error(api_error.NewFromStr("invalid obj", http.StatusBadRequest))
 		return
 	}
 
-	comment.UserID = userID
-	query := "INSERT INTO comments (thread_id, user_id, comment) VALUES (:thread_id, :user_id, :comment))"
-	_, err = db.NamedExec(query, comment)
+	comment := commentRequest["comment"]
+
+	query := "INSERT INTO comments (thread_id, user_id, comment) VALUES ($1, $2, $3)"
+	_, err = db.Exec(query, threadIDInt, userID, comment)
 	if err != nil {
 		c.Error(err)
 		return
@@ -55,6 +70,62 @@ func Edit(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
+func List() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		db := c.MustGet("db").(*sqlx.DB)
+
+		threadID := c.Param("threadID")
+		if threadID == "" {
+			c.Error(api_error.NewFromStr("missing thread id", http.StatusBadRequest))
+			return
+		}
+
+		page := c.DefaultQuery("p", "1")
+		pageInt, err := strconv.Atoi(page)
+		if err != nil {
+			c.Error(api_error.NewFromStr("invalid page", http.StatusBadRequest))
+			return
+		}
+		//sort := c.DefaultQuery("sort", "likes")
+
+		query := `
+			SELECT 
+				c.id, u.username, c.comment, c.creation_date, 
+				c.updated_date, c.like_count, c.dislike_count
+			FROM users u, comments c
+			WHERE
+				c.thread_id = $1 AND c.user_id = u.id
+			ORDER BY
+				c.like_count DESC
+			LIMIT $2 OFFSET $3
+			`
+
+		comments, err := utils_db.FetchAll[models.CommentView](db, query,
+			threadID, models.DEFAULT_PAGE_SIZE, (pageInt-1)*models.DEFAULT_PAGE_SIZE)
+		if err != nil {
+			c.Error(err)
+			return
+		}
+
+		commentsCount, err := utils_db.GetTotalRecordNo(db, "SELECT COUNT(*) FROM comments WHERE thread_id = $1", threadID)
+		if err != nil {
+			c.Error(err)
+			return
+		}
+
+		c.JSON(http.StatusOK, models.PaginatedResponse[models.CommentView]{
+			Response: comments,
+			Pagination: models.Pagination{
+				CurrentPage: pageInt,
+				PageSize:    models.DEFAULT_PAGE_SIZE,
+				LastPage:    commentsCount,
+			},
+		})
+
+	}
+
+}
+
 func Delete(c *gin.Context) {
 	db, userID := utils_handler.GetReqCx(c)
 	comment, err := utils_handler.GetObj[models.Comment](c)
@@ -83,14 +154,23 @@ func HandleLikeDislike(v int, tableName string) gin.HandlerFunc {
 			return
 		}
 
+		var columnName string
+		switch tableName {
+		case "user_thread_likes":
+			columnName = "thread_id"
+		case "user_comment_likes":
+			columnName = "comment_id"
+		}
+
 		isLiked, err := utils_db.FetchOne[int](
 			db,
-			fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE user_id = $1 AND comment_id = $2", tableName),
+			fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE user_id = $1 AND %s = $2", tableName, columnName),
 			userID, objID)
 
 		switch isLiked {
 		case 0:
-			_, err := db.Exec(fmt.Sprintf("INSERT INTO %s (user_id, comment_id, variant) VALUES ($1, $2, $3)", tableName),
+			_, err := db.Exec(fmt.Sprintf(
+				"INSERT INTO %s (user_id, %s, variant) VALUES ($1, $2, $3)", tableName, columnName),
 				userID, objID, v)
 			if err != nil {
 				c.Error(err)
@@ -98,7 +178,7 @@ func HandleLikeDislike(v int, tableName string) gin.HandlerFunc {
 			}
 		case 1:
 			likeVariant, err := utils_db.FetchOne[int](db,
-				fmt.Sprintf("SELECT variant FROM %s WHERE user_id = $1 AND comment_id = $2", tableName),
+				fmt.Sprintf("SELECT variant FROM %s WHERE user_id = $1 AND %s = $2", tableName, columnName),
 				userID, objID)
 			if err != nil {
 				c.Error(err)
@@ -107,16 +187,32 @@ func HandleLikeDislike(v int, tableName string) gin.HandlerFunc {
 
 			switch likeVariant {
 			case 0:
-				_, err := db.Exec(
-					fmt.Sprintf("INSERT INTO %s (user_id, comment_id, variant) VALUES ($1, $2, $3)", tableName),
-					userID, objID, 1-v)
+				var query string
+				if v == 1 {
+					log.Printf("is disliked, now updating to like.")
+					query = fmt.Sprintf("UPDATE %s SET variant = 1 WHERE user_id = $1 AND %s = $2", tableName, columnName)
+				} else {
+					log.Printf("already disliked, now canceling dislike")
+					query = fmt.Sprintf("DELETE FROM %s WHERE user_id = $1 AND %s = $2", tableName, columnName)
+				}
+
+				_, err := db.Exec(query, userID, objID)
 				if err != nil {
 					c.Error(err)
 					return
 				}
+
 			case 1:
-				_, err := db.Exec(
-					fmt.Sprintf("DELETE FROM %s WHERE user_id = $1 AND comment_id = $2", tableName), userID, objID)
+				var query string
+				if v == 0 {
+					log.Printf("is disliked, now updating to like.")
+					query = fmt.Sprintf("UPDATE %s SET variant = 0 WHERE user_id = $1 AND %s = $2", tableName, columnName)
+				} else {
+					log.Printf("already liked, now canceling like.")
+					query = fmt.Sprintf("DELETE FROM %s WHERE user_id = $1 AND %s = $2", tableName, columnName)
+				}
+
+				_, err := db.Exec(query, userID, objID)
 				if err != nil {
 					c.Error(err)
 					return

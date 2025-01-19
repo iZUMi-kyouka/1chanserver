@@ -7,7 +7,6 @@ import (
 	"1chanserver/internal/utils/utils_handler"
 	"fmt"
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"net/http"
 	"strconv"
@@ -32,17 +31,16 @@ func New(c *gin.Context) {
 		return
 	}
 
-	threadID, _ := uuid.NewUUID()
+	var threadID int
 
-	_, err = tx.Exec(
-		"INSERT INTO threads(id, user_id, title, original_post, like_count, view_count) VALUES ($1, $2, $3, $4, $5, $6)",
-		threadID,
+	err = tx.QueryRowx(
+		"INSERT INTO threads(user_id, title, original_post, like_count, view_count) VALUES ($1, $2, $3, $4, $5) RETURNING id;",
 		userID,
 		newThread.Title,
 		newThread.OriginalPost,
 		0,
 		0,
-	)
+	).Scan(&threadID)
 	if err != nil {
 		c.Error(err)
 		return
@@ -77,16 +75,16 @@ func View(page int) gin.HandlerFunc {
 		}
 
 		db := c.MustGet("db").(*sqlx.DB)
-		comments, err := utils_db.FetchAll[models.Comment](
-			db, "SELECT * FROM comments WHERE thread_id = $1 ORDER BY like_count LIMIT 100 OFFSET $2", threadID, (page-1)*100)
+		comments, err := utils_db.FetchAll[models.CommentView](
+			db, "SELECT c.*, u.username FROM comments c, users u WHERE thread_id = $1 AND c.user_id = u.id ORDER BY like_count LIMIT 100 OFFSET $2", threadID, (page-1)*100)
 
 		if err != nil {
 			c.Error(err)
 			return
 		}
 
-		thread, err := utils_db.FetchOne[models.Thread](
-			db, "SELECT * FROM threads WHERE id = $1", threadID)
+		thread, err := utils_db.FetchOne[models.ThreadView](
+			db, "SELECT t.*, u.username FROM threads t, users u WHERE t.id = $1 AND t.user_id = u.id", threadID)
 		if err != nil {
 			c.Error(err)
 			return
@@ -99,10 +97,16 @@ func View(page int) gin.HandlerFunc {
 			return
 		}
 
+		_, err = db.Exec("UPDATE threads SET view_count = view_count + 1 WHERE id = $1", threadID)
+		if err != nil {
+			c.Error(err)
+			return
+		}
+
 		c.JSON(http.StatusOK, models.ThreadViewResponse{
 			Thread: thread,
-			Comments: models.CommentResponse{
-				Comments: comments,
+			Comments: models.PaginatedResponse[models.CommentView]{
+				Response: comments,
 				Pagination: models.Pagination{
 					CurrentPage: page,
 					LastPage:    totalComments/100 + 1,
@@ -117,33 +121,86 @@ func Search() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		db := c.MustGet("db").(*sqlx.DB)
 
-		query := c.Param("searchQuery")
-		page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-		tagStrings := strings.Split(c.Query("tag"), ",")
-		var tags []int
-		for _, tagString := range tagStrings {
-			tag, err := strconv.Atoi(strings.TrimSpace(tagString))
-			if err != nil {
-				c.Error(api_error.NewC(err, http.StatusBadRequest))
-				return
-			}
-
-			tags = append(tags, tag)
+		// Keyword query
+		query := c.Query("q")
+		if query == "" {
+			c.Error(api_error.NewFromStr("empty query", http.StatusBadRequest))
+			return
 		}
 
-		dbQuery := fmt.Sprintf(
-			"SELECT id, user_id, title, original_post, creation_date, updated_date, like_count, dislike_count, view_count, ts_rank(search_vector, to_tsquery('english', $1)) AS rank FROM threads WHERE search_vector @@ to_tsquery('english', $1) ORDER BY rank LIMIT $2 OFFSET $3")
+		// Page
+		page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 
-		threadList, err := utils_db.FetchAll[models.ThreadSnippet](
+		// Tags
+		var tags []int
+		tagStrings := c.DefaultQuery("tags", "")
+		if tagStrings != "" {
+			for _, tagString := range strings.Split(tagStrings, ",") {
+				tag, err := strconv.Atoi(strings.TrimSpace(tagString))
+				if err != nil {
+					c.Error(api_error.NewC(err, http.StatusBadRequest))
+					return
+				}
+
+				tags = append(tags, tag)
+			}
+		}
+
+		// TODO: Find a cleaner solution to get the number of responses in a single query
+
+		var dbQuery string
+		var dbQueryCount string
+		if len(tags) >= 1 {
+			dbQuery =
+				fmt.Sprintf(`
+			SELECT DISTINCT 
+    			t.id, t.user_id, t.title, t.original_post, t.creation_date, t.updated_date, t.like_count, 
+				t.dislike_count, t.view_count, ts_rank(t.search_vector, to_tsquery('english', $1)) AS rank
+			FROM threads t, thread_tags tt
+			WHERE 
+				t.search_vector @@ to_tsquery('english', $1)
+				AND t.id = tt.thread_id AND tt.tag_id IN %s
+			ORDER BY rank 
+			LIMIT $2 OFFSET $3;`, utils_db.ToInQueryForm(tags))
+			//log.Println(dbQuery)
+
+			dbQueryCount =
+				fmt.Sprintf(`
+			SELECT COUNT(DISTINCT t.id) 
+			FROM threads t
+			JOIN thread_tags tt
+			ON t.id = tt.thread_id AND tt.tag_id IN %s
+			WHERE 
+				t.search_vector @@ to_tsquery('english', $1)
+				AND t.id = tt.thread_id AND tt.tag_id IN %s;`,
+					utils_db.ToInQueryForm(tags))
+
+		} else {
+			dbQuery =
+				`SELECT 
+    			t.id, t.user_id, t.title, t.original_post, t.creation_date, t.updated_date, t.like_count, 
+				t.dislike_count, t.view_count, ts_rank(t.search_vector, to_tsquery('english', $1)) AS rank 
+			FROM threads t
+			WHERE 
+				search_vector @@ to_tsquery('english', $1)
+			ORDER BY rank 
+			LIMIT $2 OFFSET $3;`
+
+			dbQueryCount = `
+			SELECT COUNT(DISTINCT t.id)	
+			FROM threads t
+			WHERE 
+				search_vector @@ to_tsquery('english', $1);`
+		}
+
+		threadList, err := utils_db.FetchAll[models.ThreadView](
 			db, dbQuery, query, models.DEFAULT_PAGE_SIZE, (page-1)*100)
 		if err != nil {
 			c.Error(err)
 			return
 		}
 
-		threadCount, err := utils_db.FetchOne[int](
-			db, "SELECT COUNT(*) FROM "+
-				"(SELECT id FROM threads WHERE search_vector @@ to_tsquery('english', $1))", query)
+		threadCount, err := utils_db.FetchOne[int](db, dbQueryCount, query)
 		if err != nil {
 			c.Error(err)
 			return
@@ -187,12 +244,14 @@ func List() gin.HandlerFunc {
 		switch sort_by {
 		case "date":
 			sort_by = "t.creation_date"
-		case "like":
+		case "likes":
 			sort_by = "t.like_count"
-		case "dislike":
+		case "dislikes":
 			sort_by = "t.dislike_count"
-		case "view":
+		case "views":
 			sort_by = "t.view_count"
+		case "comments":
+			sort_by = "t.comment_count"
 		default:
 			sort_by = "t.view_count"
 		}
@@ -228,7 +287,7 @@ func List() gin.HandlerFunc {
 				LIMIT $1 OFFSET $2`, sort_by, order)
 		}
 
-		threadList, err := utils_db.FetchAll[models.ThreadSnippet](db, query, models.DEFAULT_PAGE_SIZE, (pageInt-1)*100)
+		threadList, err := utils_db.FetchAll[models.ThreadView](db, query, models.DEFAULT_PAGE_SIZE, (pageInt-1)*100)
 		if err != nil {
 			c.Error(api_error.NewC(err, http.StatusInternalServerError))
 			return
@@ -236,7 +295,7 @@ func List() gin.HandlerFunc {
 
 		for i := 0; i < len(threadList); i++ {
 			if len(threadList[i].OriginalPost) > 200 {
-				threadList[i].OriginalPost = threadList[i].OriginalPost[:200]
+				threadList[i].OriginalPost = threadList[i].OriginalPost[:200] + "..."
 			}
 		}
 
@@ -246,9 +305,9 @@ func List() gin.HandlerFunc {
 			return
 		}
 
-		c.JSON(http.StatusOK, models.ThreadListResponse{
-			Threads: threadList,
-			Paginations: models.Pagination{
+		c.JSON(http.StatusOK, models.PaginatedResponse[models.ThreadView]{
+			Response: threadList,
+			Pagination: models.Pagination{
 				CurrentPage: pageInt,
 				LastPage:    threadCount/100 + 1,
 				PageSize:    min(len(threadList), models.DEFAULT_PAGE_SIZE),
@@ -315,4 +374,31 @@ func Tags(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"tags": tags,
 	})
+}
+
+func CreateTag(c *gin.Context) {
+	db := c.MustGet("db").(*sqlx.DB)
+	tag := c.Query("tag")
+	if tag == "" {
+		c.Error(api_error.NewFromStr("missing tag", http.StatusBadRequest))
+		return
+	}
+
+	count, err := utils_db.GetTotalRecordNo(db, "SELECT COUNT(*) FROM tags WHERE tag = $1", tag)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+	if count != 0 {
+		c.Error(api_error.NewFromStr("tag already exists", http.StatusConflict))
+		return
+	}
+
+	_, err = db.Exec("INSERT INTO tags(tag) VALUES($1)", tag)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+
+	c.Status(http.StatusCreated)
 }
