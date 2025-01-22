@@ -145,10 +145,10 @@ CREATE TABLE messages (
 -- Reports
 CREATE TABLE reports (
     id BIGSERIAL PRIMARY KEY,
-    thread_id INT,
+    thread_id BIGINT,
     comment_id BIGINT,
     reporter_id UUID NOT NULL,
-    moderator_id UUID NOT NULL,
+    moderator_id UUID,
     report_reason TEXT NOT NULL,
     actions_taken TEXT,
     creation_date TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -339,6 +339,22 @@ CREATE TABLE tags (
     tag TEXT NOT NULL
 );
 
+CREATE TABLE custom_tags (
+    id BIGSERIAL PRIMARY KEY,
+    tag TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX idx_custom_tags_tag ON custom_tags(tag);
+
+CREATE TABLE thread_custom_tags (
+    thread_id BIGINT,
+    custom_tag_id BIGINT,
+    FOREIGN KEY (thread_id) REFERENCES threads(id),
+    FOREIGN KEY (custom_tag_id) REFERENCES custom_tags(id)
+);
+
+CREATE INDEX idx_thread_custom_tags ON thread_custom_tags(custom_tag_id);
+
 CREATE OR REPLACE FUNCTION update_user_post_count()
     RETURNS TRIGGER AS $$
     BEGIN
@@ -394,34 +410,34 @@ CREATE TRIGGER set_thread_last_comment_timestamp
 
 
 
-INSERT INTO tags (id, tag) VALUES
-                               (0, 'Technology'),
-                               (1, 'Gaming'),
-                               (2, 'Entertainment'),
-                               (3, 'Lifestyle'),
-                               (4, 'Education'),
-                               (5, 'Community'),
-                               (6, 'Business'),
-                               (7, 'Hobbies'),
-                               (8, 'Science'),
-                               (9, 'Sports'),
-                               (10, 'Creative Arts'),
-                               (11, 'Politics'),
-                               (12, 'DIY & Crafting'),
-                               (13, 'Automobiles'),
-                               (14, 'Pets & Animals'),
-                               (15, 'Health & Wellness'),
-                               (16, 'Work & Productivity'),
-                               (17, 'Travel'),
-                               (18, 'Food & Drinks');
-
-INSERT INTO users(id, username, password_hash) VALUES
-   ('23cdeffc-1c44-41e6-ab0b-001e6591b01f', 'kyo73', '$argon2id$v=19$m=65536,t=1,p=2$RdTX6X6yI9aNSDqsIEy5Aw$LA1cB0j7vDUzv21NQz8fvAvAtXRsdfHIioGKJ3e38Oo');
-
-INSERT INTO user_profiles(id, creation_date) VALUES
-    ('23cdeffc-1c44-41e6-ab0b-001e6591b01f', '2025-01-15 13:23:12.799387+07');
-
-INSERT INTO threads(user_id, title, original_post) VALUES
-    ('23cdeffc-1c44-41e6-ab0b-001e6591b01f', 'The Rust Programming Language', 'Rust is the best language. Rust is the best language. Rust is the best language. Rust is the best language. Rust is the best language. Rust is the best language. Rust is the best language.');
-
-INSERT INTO thread_tags VALUES (1, 0);
+-- INSERT INTO tags (id, tag) VALUES
+--                                (0, 'Technology'),
+--                                (1, 'Gaming'),
+--                                (2, 'Entertainment'),
+--                                (3, 'Lifestyle'),
+--                                (4, 'Education'),
+--                                (5, 'Community'),
+--                                (6, 'Business'),
+--                                (7, 'Hobbies'),
+--                                (8, 'Science'),
+--                                (9, 'Sports'),
+--                                (10, 'Creative Arts'),
+--                                (11, 'Politics'),
+--                                (12, 'DIY & Crafting'),
+--                                (13, 'Automobiles'),
+--                                (14, 'Pets & Animals'),
+--                                (15, 'Health & Wellness'),
+--                                (16, 'Work & Productivity'),
+--                                (17, 'Travel'),
+--                                (18, 'Food & Drinks');
+--
+-- INSERT INTO users(id, username, password_hash) VALUES
+--    ('23cdeffc-1c44-41e6-ab0b-001e6591b01f', 'kyo73', '$argon2id$v=19$m=65536,t=1,p=2$RdTX6X6yI9aNSDqsIEy5Aw$LA1cB0j7vDUzv21NQz8fvAvAtXRsdfHIioGKJ3e38Oo');
+--
+-- INSERT INTO user_profiles(id, creation_date) VALUES
+--     ('23cdeffc-1c44-41e6-ab0b-001e6591b01f', '2025-01-15 13:23:12.799387+07');
+--
+-- INSERT INTO threads(user_id, title, original_post) VALUES
+--     ('23cdeffc-1c44-41e6-ab0b-001e6591b01f', 'The Rust Programming Language', 'Rust is the best language. Rust is the best language. Rust is the best language. Rust is the best language. Rust is the best language. Rust is the best language. Rust is the best language.');
+--
+-- INSERT INTO thread_tags VALUES (1, 0);

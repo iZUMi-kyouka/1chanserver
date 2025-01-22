@@ -29,7 +29,7 @@ func Register(c *gin.Context) {
 
 	newUser, err := utils_handler.GetObj[models.User](c)
 	if err != nil {
-		c.Error(api_error.NewC(err, http.StatusBadRequest))
+		c.Error(api_error.NewFromErr(err, http.StatusBadRequest))
 		return
 	}
 
@@ -125,7 +125,7 @@ func Login(c *gin.Context) {
 
 	loginUser, err := utils_handler.GetObj[models.User](c)
 	if err != nil {
-		c.Error(api_error.NewC(err, http.StatusBadRequest))
+		c.Error(api_error.NewFromErr(err, http.StatusBadRequest))
 		return
 	}
 
@@ -193,6 +193,15 @@ func Login(c *gin.Context) {
 		return
 	}
 
+	query := `
+	SELECT * FROM user_profiles WHERE id = $1
+	`
+	userProfile, err := utils_db.FetchOne[models.UserProfile](db, query, storedUser.ID)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+
 	_, err = tx.Exec("UPDATE user_profiles SET last_login = $1 WHERE id = $2",
 		time.Now().UTC(), storedUser.ID)
 	if err != nil {
@@ -211,6 +220,7 @@ func Login(c *gin.Context) {
 			"access_token": accessToken,
 		},
 		"refresh_token": refreshToken,
+		"profile":       userProfile,
 	})
 }
 
@@ -221,7 +231,7 @@ func Logout(c *gin.Context) {
 	deviceID := c.GetHeader("Device-ID")
 
 	if err != nil {
-		c.Error(api_error.NewC(err, http.StatusBadRequest))
+		c.Error(api_error.NewFromErr(err, http.StatusBadRequest))
 		c.Abort()
 		return
 	}
@@ -239,16 +249,21 @@ func Logout(c *gin.Context) {
 }
 
 func UpdateProfile(c *gin.Context) {
-	db := c.MustGet("db").(*sqlx.DB)
-	var userProfile models.UserProfile
+	db, userID := utils_handler.GetReqCx(c)
 
-	err := c.ShouldBindJSON(&userProfile)
+	newProfile, err := utils_handler.GetStringMap(c)
 	if err != nil {
 		c.Error(api_error.New(err, http.StatusBadRequest, "invalid user profile"))
 		return
 	}
 
-	err = utils_db.EditUserProfile(&userProfile, db)
+	query := `
+	UPDATE user_profiles 
+	SET biodata = $1, email = $2
+	WHERE id = $3
+	`
+
+	_, err = db.Exec(query, newProfile["biodata"], newProfile["email"], userID)
 	if err != nil {
 		c.Error(err)
 		return
@@ -390,5 +405,44 @@ func Comments() gin.HandlerFunc {
 		}
 
 		c.JSON(http.StatusOK, commentIDMap)
+	}
+}
+
+func UpdatePassword() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		db, userID := utils_handler.GetReqCx(c)
+
+		var request map[string]string
+		if err := c.ShouldBindJSON(&request); err != nil {
+			c.Error(api_error.NewFromErr(err, http.StatusBadRequest))
+			return
+		}
+
+		oldPassword := request["old_password"]
+		newPassword := request["new_password"]
+		if newPassword == "" {
+			c.Error(api_error.NewFromErr(nil, http.StatusBadRequest))
+			return
+		}
+
+		storedPasswordHash, err := utils_db.FetchOne[string](db, "SELECT password_hash FROM users WHERE id = $1", userID)
+		if err != nil {
+			c.Error(err)
+			return
+		}
+
+		if utils_auth.VerifyArgon2Hash(oldPassword, storedPasswordHash) {
+			newPasswordHash := utils_auth.GenerateArgon2Hash(newPassword)
+			_, err = db.Exec("UPDATE users SET password_hash = $1 WHERE id = $2", newPasswordHash, userID)
+			if err != nil {
+				c.Error(err)
+				return
+			}
+		} else {
+			c.Status(http.StatusForbidden)
+			return
+		}
+
+		c.Status(http.StatusOK)
 	}
 }

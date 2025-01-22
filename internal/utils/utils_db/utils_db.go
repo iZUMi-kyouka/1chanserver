@@ -2,12 +2,17 @@ package utils_db
 
 import (
 	"1chanserver/internal/models"
+	"1chanserver/internal/models/api_error"
+	"database/sql"
+	"errors"
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"
 	"log"
+	"net/http"
+	"strings"
 	"time"
 )
 
@@ -111,16 +116,30 @@ func HandleTxRollback(tx *sqlx.Tx, err *error, c *gin.Context) {
 }
 
 func ToInQueryForm[T any](s []T) string {
-	var result string
-	result += "("
-	if len(s) >= 2 {
-		for i := 0; i < len(s)-1; i++ {
-			result += fmt.Sprintf("%d, ", s[i])
+	if len(s) == 0 {
+		return "()"
+	}
+
+	var builder strings.Builder
+	builder.WriteString("(")
+
+	for i, v := range s {
+		switch v := any(v).(type) {
+		case int:
+			builder.WriteString(fmt.Sprintf("%d", v))
+		case string:
+			builder.WriteString(fmt.Sprintf("'%s'", v))
+		default:
+			panic("unsupported tag identifier type")
+		}
+
+		if i < len(s)-1 {
+			builder.WriteString(", ")
 		}
 	}
 
-	result += fmt.Sprintf("%d)", s[len(s)-1])
-	return result
+	builder.WriteString(")")
+	return builder.String()
 }
 
 func GetTotalRecordNo(db *sqlx.DB, query string, args ...interface{}) (int, error) {
@@ -140,4 +159,57 @@ func CheckDuplicateError(err error) bool {
 	}
 
 	return false
+}
+
+func SortCriteriaToDBColumn(s string) (string, error) {
+	switch s {
+	case "relevance":
+		return "rank", nil
+	case "views":
+		return "view_count", nil
+	case "likes":
+		return "like_count", nil
+	case "dislikes":
+		return "dislike_count", nil
+	case "date":
+		return "date", nil
+	default:
+		return "", api_error.NewFromStr("invalid sort criteria", http.StatusBadRequest)
+	}
+}
+
+func SortCriteriaToDBColumnWithAlias(sortCriteria string, tableAlias string) (string, error) {
+	switch tableAlias {
+	case "":
+		return SortCriteriaToDBColumn(sortCriteria)
+	default:
+		columnName, err := SortCriteriaToDBColumn(sortCriteria)
+		if err != nil {
+			return "", err
+		}
+
+		return fmt.Sprintf("%s.%s", tableAlias, columnName), nil
+	}
+}
+
+func GetCustomTagID(db *sqlx.DB, customTags []string) ([]int, error) {
+	if len(customTags) == 0 {
+		return []int{}, nil
+	}
+
+	customTagIDs := make([]int, len(customTags))
+	for _, tag := range customTags {
+		customTagID, err := FetchOne[int](db, "SELECT id FROM custom_tags WHERE tag = $1", tag)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+
+			return nil, err
+		}
+
+		customTagIDs = append(customTagIDs, customTagID)
+	}
+
+	return customTagIDs, nil
 }

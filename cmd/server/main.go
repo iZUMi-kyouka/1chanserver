@@ -80,6 +80,8 @@ func main() {
 				usersAuth.POST("/profile", api_user.UpdateProfile)
 				usersAuth.GET("/threads", api_user.Threads())
 				usersAuth.GET("/comments", api_user.Comments())
+				usersAuth.POST("/update_password", api_user.UpdatePassword())
+				usersAuth.POST("/profile/picture", api_files.UploadProfilePicture())
 			}
 
 			users.POST("/login", api_user.Login)
@@ -95,8 +97,9 @@ func main() {
 				threadsAuth.POST("/new", api_thread.New)
 				threadsAuth.PUT("/like/:objID", api_comment.HandleLikeDislike(1, "user_thread_likes"))
 				threadsAuth.PUT("/dislike/:objID", api_comment.HandleLikeDislike(0, "user_thread_likes"))
-				threadsAuth.PATCH("/edit", api_thread.Edit)
+				threadsAuth.PATCH("/edit/:threadID", api_thread.Edit)
 				threadsAuth.DELETE("/delete/:threadID", api_thread.Delete)
+				threadsAuth.POST("/report/:objID", api_thread.Report("thread"))
 			}
 
 			threads.GET("/:threadID", api_thread.View(1))
@@ -112,13 +115,14 @@ func main() {
 			commentsAuth := comments.Group("/", middleware.Auth())
 			{
 				commentsAuth.POST("/new/:threadID", api_comment.New)
-				commentsAuth.PATCH("/edit", api_comment.Edit)
+				commentsAuth.PATCH("/edit/:commentID", api_comment.Edit)
 				commentsAuth.DELETE("/delete", api_comment.Delete)
 				commentsAuth.PUT("/like/:objID", api_comment.HandleLikeDislike(1, "user_comment_likes"))
 				commentsAuth.PUT("/dislike/:objID", api_comment.HandleLikeDislike(0, "user_comment_likes"))
+				commentsAuth.POST("/report/:objID", api_thread.Report("comment"))
 			}
 
-			comments.GET("/:threadID")
+			comments.GET("/:commentID", api_comment.View())
 		}
 
 		tags := v1.Group("/tags")

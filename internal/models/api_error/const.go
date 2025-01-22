@@ -6,6 +6,6 @@ import (
 )
 
 var (
-	MissingPageReq = NewC(errors.New("missing page request"), http.StatusBadRequest)
-	InvalidPageReq = NewC(errors.New("invalid page request"), http.StatusBadRequest)
+	MissingPageReq = NewFromErr(errors.New("missing page request"), http.StatusBadRequest)
+	InvalidPageReq = NewFromErr(errors.New("invalid page request"), http.StatusBadRequest)
 )

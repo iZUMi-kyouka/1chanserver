@@ -48,20 +48,25 @@ func New(c *gin.Context) {
 
 func Edit(c *gin.Context) {
 	db, userID := utils_handler.GetReqCx(c)
-	comment, err := utils_handler.GetObj[models.Comment](c)
+	commentID := c.Param("commentID")
+	if commentID == "" {
+		c.Error(api_error.NewFromStr("missing comment id", http.StatusBadRequest))
+		return
+	}
+
+	comment, err := utils_handler.GetObj[map[string]string](c)
 	if err != nil {
 		c.Error(api_error.NewFromStr("invalid obj", http.StatusBadRequest))
 		return
 	}
 
-	comment.UserID = userID
-	curTime := time.Now()
-	comment.UpdatedDate = &curTime
-	query := "UPDATE comments SET " +
-		"comment = :comment, " +
-		"updated_date = :updated_date " +
-		"WHERE id = :id AND user_id = :user_id"
-	_, err = db.NamedExec(query, comment)
+	query := `
+	UPDATE comments
+	SET comment = $1, updated_date = $2
+	WHERE id = $3 AND user_id = $4 
+	`
+
+	_, err = db.Exec(query, comment["comment"], time.Now().UTC(), commentID, userID)
 	if err != nil {
 		c.Error(err)
 		return
@@ -150,7 +155,7 @@ func HandleLikeDislike(v int, tableName string) gin.HandlerFunc {
 		db, userID := utils_handler.GetReqCx(c)
 		objID, err := strconv.Atoi(c.Param("objID"))
 		if err != nil {
-			c.Error(api_error.NewC(err, http.StatusBadRequest))
+			c.Error(api_error.NewFromErr(err, http.StatusBadRequest))
 			return
 		}
 
@@ -221,5 +226,28 @@ func HandleLikeDislike(v int, tableName string) gin.HandlerFunc {
 		}
 
 		c.Status(http.StatusOK)
+	}
+}
+
+func View() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		db := c.MustGet("db").(*sqlx.DB)
+		commentID := c.Param("commentID")
+		if commentID == "" {
+			c.Error(api_error.NewFromStr("missing comment id", http.StatusBadRequest))
+			return
+		}
+
+		query := `
+		SELECT * FROM comments WHERE id = $1
+		`
+
+		comment, err := utils_db.FetchOne[models.CommentView](db, query, commentID)
+		if err != nil {
+			c.Error(err)
+			return
+		}
+
+		c.JSON(http.StatusOK, comment)
 	}
 }

@@ -66,7 +66,7 @@ func AuthResourceOwnership() gin.HandlerFunc {
 
 		protectedResource, ok := resource.(models.Protected)
 		if !ok {
-			c.Error(api_error.NewC(errors.New("invalid object"), http.StatusBadRequest))
+			c.Error(api_error.NewFromErr(errors.New("invalid object"), http.StatusBadRequest))
 			c.Abort()
 			return
 		}

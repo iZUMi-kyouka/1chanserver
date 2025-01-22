@@ -31,8 +31,34 @@ func New(c *gin.Context) {
 		return
 	}
 
-	var threadID int
+	// Ensure all custom tags are valid and present. If not, add it.
+	lowerCustomTags := make([]string, len(newThread.CustomTags))
+	for i := 0; i < len(newThread.CustomTags); i++ {
+		lowerCustomTags[i] = strings.ToLower(newThread.CustomTags[i])
+	}
 
+	for i := 0; i < len(lowerCustomTags); i++ {
+		if lowerCustomTags[i] == "" || !utils_handler.CheckAllowedSymbols(lowerCustomTags[i]) {
+			c.Error(api_error.NewFromStr("invalid custom tag", http.StatusBadRequest))
+			return
+		}
+
+		customTagAlreadyPresent, err := utils_db.FetchOne[int](db, "SELECT COUNT(*) FROM custom_tags WHERE tag = $1", lowerCustomTags[i])
+		if err != nil {
+			c.Error(api_error.NewFromStr("failed to check custom tag", http.StatusBadRequest))
+			return
+		}
+
+		if customTagAlreadyPresent == 0 {
+			_, err = tx.Exec("INSERT INTO custom_tags(tag) VALUES($1)", lowerCustomTags[i])
+			if err != nil {
+				c.Error(err)
+				return
+			}
+		}
+	}
+
+	var threadID int
 	err = tx.QueryRowx(
 		"INSERT INTO threads(user_id, title, original_post, like_count, view_count) VALUES ($1, $2, $3, $4, $5) RETURNING id;",
 		userID,
@@ -44,6 +70,21 @@ func New(c *gin.Context) {
 	if err != nil {
 		c.Error(err)
 		return
+	}
+
+	for i := 0; i < len(lowerCustomTags); i++ {
+		var customTagID int
+		err = tx.Get(&customTagID, "SELECT id FROM custom_tags WHERE tag = $1", lowerCustomTags[i])
+		if err != nil {
+			c.Error(api_error.NewFromStr("failed to check custom tag", http.StatusBadRequest))
+			return
+		}
+
+		_, err = tx.Exec("INSERT INTO thread_custom_tags(thread_id, custom_tag_id) VALUES($1, $2)", threadID, customTagID)
+		if err != nil {
+			c.Error(err)
+			return
+		}
 	}
 
 	for i := 0; i < len(newThread.Tags); i++ {
@@ -59,7 +100,7 @@ func View(page int) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		threadID, err := strconv.Atoi(c.Param("threadID"))
 		if err != nil {
-			c.Error(api_error.NewC(err, http.StatusBadRequest))
+			c.Error(api_error.NewFromErr(err, http.StatusBadRequest))
 			return
 		}
 
@@ -76,7 +117,7 @@ func View(page int) gin.HandlerFunc {
 
 		db := c.MustGet("db").(*sqlx.DB)
 		comments, err := utils_db.FetchAll[models.CommentView](
-			db, "SELECT c.*, u.username FROM comments c, users u WHERE thread_id = $1 AND c.user_id = u.id ORDER BY like_count LIMIT 100 OFFSET $2", threadID, (page-1)*100)
+			db, "SELECT c.*, u.username, up.profile_picture_path FROM comments c, users u JOIN user_profiles up ON u.id = up.id WHERE thread_id = $1 AND c.user_id = u.id ORDER BY like_count LIMIT $2 OFFSET $3", threadID, models.DEFAULT_PAGE_SIZE, (page-1)*models.DEFAULT_PAGE_SIZE)
 
 		if err != nil {
 			c.Error(err)
@@ -84,7 +125,7 @@ func View(page int) gin.HandlerFunc {
 		}
 
 		thread, err := utils_db.FetchOne[models.ThreadView](
-			db, "SELECT t.*, u.username FROM threads t, users u WHERE t.id = $1 AND t.user_id = u.id", threadID)
+			db, "SELECT t.*, u.username, up.profile_picture_path FROM threads t, users u JOIN user_profiles up ON up.id = u.id WHERE t.id = $1 AND t.user_id = u.id", threadID)
 		if err != nil {
 			c.Error(err)
 			return
@@ -109,7 +150,7 @@ func View(page int) gin.HandlerFunc {
 				Response: comments,
 				Pagination: models.Pagination{
 					CurrentPage: page,
-					LastPage:    totalComments/100 + 1,
+					LastPage:    totalComments/models.DEFAULT_PAGE_SIZE + 1,
 					PageSize:    min(len(comments), models.DEFAULT_PAGE_SIZE),
 				},
 			},
@@ -121,96 +162,185 @@ func Search() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		db := c.MustGet("db").(*sqlx.DB)
 
-		// Keyword query
-		query := c.Query("q")
-		if query == "" {
-			c.Error(api_error.NewFromStr("empty query", http.StatusBadRequest))
+		// Get any specified query parameters
+		threadReqQuery, err := utils_handler.GetThreadReqQuery(c, "", "relevance")
+		if err != nil {
+			c.Error(err)
 			return
 		}
 
-		// Page
-		page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+		searchQuery := threadReqQuery["q"]
+		if searchQuery == "" {
+			c.Error(api_error.NewFromStr("empty search query", http.StatusBadRequest))
+			return
+		}
 
-		// Tags
-		var tags []int
-		tagStrings := c.DefaultQuery("tags", "")
-		if tagStrings != "" {
-			for _, tagString := range strings.Split(tagStrings, ",") {
-				tag, err := strconv.Atoi(strings.TrimSpace(tagString))
-				if err != nil {
-					c.Error(api_error.NewC(err, http.StatusBadRequest))
-					return
-				}
+		tags := threadReqQuery["tags"].([]string)
+		customTags := threadReqQuery["custom_tags"].([]string)
+		customTagIDs, err := utils_db.GetCustomTagID(db, customTags)
+		if err != nil {
+			c.Error(err)
+			return
+		}
 
-				tags = append(tags, tag)
+		pageInt := threadReqQuery["page"].(int)
+		sortBy := threadReqQuery["sort_by"].(string)
+		order := threadReqQuery["order"].(string)
+
+		var query string
+		var countQuery string
+
+		// Build the query according to listing parameters
+		if len(tags) > 0 && len(customTagIDs) > 0 {
+			query = fmt.Sprintf(`
+				WITH ranked_threads AS (
+					SELECT 	
+						t.*, 
+						ts_rank(t.search_vector, to_tsquery('english', $3)) AS rank, 
+						u.username, 
+						up.profile_picture_path
+					FROM threads t
+					JOIN users u ON t.user_id = u.id
+					JOIN user_profiles up ON t.user_id = up.id 
+					JOIN thread_tags tt ON t.id = tt.thread_id
+					JOIN thread_custom_tags tct ON t.id = tct.thread_id
+					WHERE t.search_vector @@ to_tsquery('english', $3) 
+					  AND tt.tag_id IN %s 
+					  AND tct.custom_tag_id IN %s
+				)
+				SELECT DISTINCT * 
+				FROM ranked_threads
+				ORDER BY %s %s
+				LIMIT $1 OFFSET $2`,
+				utils_db.ToInQueryForm[string](tags), utils_db.ToInQueryForm[int](customTagIDs), sortBy, order)
+			countQuery = fmt.Sprintf(`
+				SELECT COUNT(*)
+				FROM (
+					SELECT DISTINCT t.id
+					FROM threads t
+					JOIN users u ON t.user_id = u.id
+					JOIN user_profiles up ON t.user_id = up.id 
+					LEFT JOIN thread_tags tt ON t.id = tt.thread_id
+					LEFT JOIN thread_custom_tags tct ON t.id = tct.thread_id
+					WHERE t.search_vector @@ to_tsquery('english', $1)
+					  AND (tt.tag_id IN %s OR tct.custom_tag_id IN %s)
+				) AS unique_threads`, utils_db.ToInQueryForm[string](tags), utils_db.ToInQueryForm[int](customTagIDs))
+		} else if len(tags) > 0 && len(customTagIDs) == 0 {
+			query = fmt.Sprintf(`
+				WITH ranked_threads AS (
+					SELECT 	
+						t.*, 
+						ts_rank(t.search_vector, to_tsquery('english', $3)) AS rank, 
+						u.username, 
+						up.profile_picture_path
+					FROM threads t
+					JOIN users u ON t.user_id = u.id
+					JOIN user_profiles up ON t.user_id = up.id 
+					JOIN thread_tags tt ON t.id = tt.thread_id
+					WHERE t.search_vector @@ to_tsquery('english', $3) 
+					  AND tt.tag_id IN %s
+				)
+				SELECT DISTINCT * 
+				FROM ranked_threads
+				ORDER BY %s %s
+				LIMIT $1 OFFSET $2`,
+				utils_db.ToInQueryForm[string](tags), sortBy, order)
+			countQuery = fmt.Sprintf(`
+				SELECT COUNT(*)
+				FROM (
+					SELECT DISTINCT t.id
+					FROM threads t
+					JOIN users u ON t.user_id = u.id
+					JOIN user_profiles up ON t.user_id = up.id 
+					LEFT JOIN thread_tags tt ON t.id = tt.thread_id
+					WHERE t.search_vector @@ to_tsquery('english', $1)
+					  AND tt.tag_id IN %s
+				) AS unique_threads`, utils_db.ToInQueryForm[string](tags))
+		} else if len(tags) == 0 && len(customTagIDs) > 0 {
+			query = fmt.Sprintf(`
+				WITH ranked_threads AS (
+					SELECT 	
+						t.*, 
+						ts_rank(t.search_vector, to_tsquery('english', $3)) AS rank, 
+						u.username, 
+						up.profile_picture_path
+					FROM threads t
+					JOIN users u ON t.user_id = u.id
+					JOIN user_profiles up ON t.user_id = up.id
+					JOIN thread_custom_tags tct ON t.id = tct.thread_id
+					WHERE t.search_vector @@ to_tsquery('english', $3)
+					  AND tct.custom_tag_id IN %s
+				)
+				SELECT DISTINCT * 
+				FROM ranked_threads
+				ORDER BY %s %s
+				LIMIT $1 OFFSET $2`,
+				utils_db.ToInQueryForm[int](customTagIDs), sortBy, order)
+			countQuery = fmt.Sprintf(`
+				SELECT COUNT(*)
+				FROM (
+					SELECT DISTINCT t.id
+					FROM threads t
+					JOIN users u ON t.user_id = u.id
+					JOIN user_profiles up ON t.user_id = up.id 
+					LEFT JOIN thread_custom_tags tct ON t.id = tct.thread_id
+					WHERE t.search_vector @@ to_tsquery('english', $1)
+					  AND tct.custom_tag_id IN %s
+				) AS unique_threads`, utils_db.ToInQueryForm[int](customTagIDs))
+		} else {
+			query = fmt.Sprintf(`
+				WITH ranked_threads AS (
+					SELECT 	
+						t.*, 
+						ts_rank(t.search_vector, to_tsquery('english', $3)) AS rank, 
+						u.username, 
+						up.profile_picture_path
+					FROM threads t
+					JOIN users u ON t.user_id = u.id
+					JOIN user_profiles up ON t.user_id = up.id
+					WHERE t.search_vector @@ to_tsquery('english', $3)
+				)
+				SELECT DISTINCT * 
+				FROM ranked_threads
+				ORDER BY %s %s
+				LIMIT $1 OFFSET $2`,
+				sortBy, order)
+			countQuery = fmt.Sprintf(`
+				SELECT COUNT(*)
+				FROM (
+					SELECT DISTINCT t.id
+					FROM threads t
+					JOIN users u ON t.user_id = u.id
+					WHERE t.search_vector @@ to_tsquery('english', $1)
+				) AS unique_threads`)
+		}
+
+		// Fetch threads based on the query
+		threadList, err := utils_db.FetchAll[models.ThreadView](db, query, models.DEFAULT_PAGE_SIZE, (pageInt-1)*models.DEFAULT_PAGE_SIZE, searchQuery)
+		if err != nil {
+			c.Error(api_error.NewFromErr(err, http.StatusInternalServerError))
+			return
+		}
+
+		// Truncate the post content
+		for i := 0; i < len(threadList); i++ {
+			if len(threadList[i].OriginalPost) > 200 {
+				threadList[i].OriginalPost = threadList[i].OriginalPost[:200] + "..."
 			}
 		}
 
-		// TODO: Find a cleaner solution to get the number of responses in a single query
-
-		var dbQuery string
-		var dbQueryCount string
-		if len(tags) >= 1 {
-			dbQuery =
-				fmt.Sprintf(`
-			SELECT DISTINCT 
-    			t.id, t.user_id, t.title, t.original_post, t.creation_date, t.updated_date, t.like_count, 
-				t.dislike_count, t.view_count, ts_rank(t.search_vector, to_tsquery('english', $1)) AS rank
-			FROM threads t, thread_tags tt
-			WHERE 
-				t.search_vector @@ to_tsquery('english', $1)
-				AND t.id = tt.thread_id AND tt.tag_id IN %s
-			ORDER BY rank 
-			LIMIT $2 OFFSET $3;`, utils_db.ToInQueryForm(tags))
-			//log.Println(dbQuery)
-
-			dbQueryCount =
-				fmt.Sprintf(`
-			SELECT COUNT(DISTINCT t.id) 
-			FROM threads t
-			JOIN thread_tags tt
-			ON t.id = tt.thread_id AND tt.tag_id IN %s
-			WHERE 
-				t.search_vector @@ to_tsquery('english', $1)
-				AND t.id = tt.thread_id AND tt.tag_id IN %s;`,
-					utils_db.ToInQueryForm(tags))
-
-		} else {
-			dbQuery =
-				`SELECT 
-    			t.id, t.user_id, t.title, t.original_post, t.creation_date, t.updated_date, t.like_count, 
-				t.dislike_count, t.view_count, ts_rank(t.search_vector, to_tsquery('english', $1)) AS rank 
-			FROM threads t
-			WHERE 
-				search_vector @@ to_tsquery('english', $1)
-			ORDER BY rank 
-			LIMIT $2 OFFSET $3;`
-
-			dbQueryCount = `
-			SELECT COUNT(DISTINCT t.id)	
-			FROM threads t
-			WHERE 
-				search_vector @@ to_tsquery('english', $1);`
-		}
-
-		threadList, err := utils_db.FetchAll[models.ThreadView](
-			db, dbQuery, query, models.DEFAULT_PAGE_SIZE, (page-1)*100)
+		/// Get total number of rows for the current query for pagination
+		threadCount, err := utils_db.FetchOne[int](db, countQuery, searchQuery)
 		if err != nil {
-			c.Error(err)
+			c.Error(api_error.NewFromErr(err, http.StatusInternalServerError))
 			return
 		}
 
-		threadCount, err := utils_db.FetchOne[int](db, dbQueryCount, query)
-		if err != nil {
-			c.Error(err)
-			return
-		}
-
-		c.JSON(http.StatusOK, models.ThreadListResponse{
-			Threads: threadList,
-			Paginations: models.Pagination{
-				CurrentPage: page,
-				LastPage:    threadCount/100 + 1,
+		c.JSON(http.StatusOK, models.PaginatedResponse[models.ThreadView]{
+			Response: threadList,
+			Pagination: models.Pagination{
+				CurrentPage: pageInt,
+				LastPage:    threadCount/models.DEFAULT_PAGE_SIZE + 1,
 				PageSize:    min(len(threadList), models.DEFAULT_PAGE_SIZE),
 			},
 		})
@@ -221,87 +351,119 @@ func List() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		db := c.MustGet("db").(*sqlx.DB)
 
-		tag := c.Query("tag")
-		page := c.Query("page")
-		sort_by := c.Query("sort_by")
-		order := c.Query("order")
-
-		// Handle page
-		var pageInt int
-		if page == "" {
-			page = "1"
-			pageInt = 1
-		} else {
-			page, err := strconv.Atoi(page)
-			pageInt = page
-			if err != nil || page < 1 {
-				c.Error(api_error.NewFromStr("invalid page", http.StatusBadRequest))
-			}
+		// Get any specified query parameters
+		threadReqQuery, err := utils_handler.GetThreadReqQuery(c, "t", "views")
+		if err != nil {
+			c.Error(err)
 			return
 		}
 
-		// Handle sort by
-		switch sort_by {
-		case "date":
-			sort_by = "t.creation_date"
-		case "likes":
-			sort_by = "t.like_count"
-		case "dislikes":
-			sort_by = "t.dislike_count"
-		case "views":
-			sort_by = "t.view_count"
-		case "comments":
-			sort_by = "t.comment_count"
-		default:
-			sort_by = "t.view_count"
+		tags := threadReqQuery["tags"].([]string)
+		customTags := threadReqQuery["custom_tags"].([]string)
+		customTagIDs, err := utils_db.GetCustomTagID(db, customTags)
+		if err != nil {
+			c.Error(err)
+			return
 		}
 
-		// Handle order
-		switch order {
-		case "asc":
-		case "desc":
-		default:
-			order = "desc"
-		}
+		pageInt := threadReqQuery["page"].(int)
+		sortBy := threadReqQuery["sort_by"].(string)
+		order := threadReqQuery["order"].(string)
 
 		var query string
+		var countQuery string
 
-		if tag != "" {
+		// Build the query according to listing parameters
+		if len(tags) > 0 && len(customTagIDs) > 0 {
 			query = fmt.Sprintf(`
 				SELECT DISTINCT
-					t.*, u.username
+					t.*, u.username, up.profile_picture_path
 				FROM threads t
 				JOIN users u ON t.user_id = u.id
+				JOIN user_profiles up ON t.user_id = up.id 
 				JOIN thread_tags tt ON t.id = tt.thread_id
-				WHERE tt.tag_id IN (%s)
+				JOIN thread_custom_tags tct ON t.id = tct.thread_id
+				WHERE tt.tag_id IN %s AND tct.custom_tag_id IN %s
 				ORDER BY %s %s
-				LIMIT $1 OFFSET $2`, tag, sort_by, order)
+				LIMIT $1 OFFSET $2`, utils_db.ToInQueryForm[string](tags), utils_db.ToInQueryForm[int](customTagIDs), sortBy, order)
+			countQuery = fmt.Sprintf(`
+				SELECT COUNT(*)
+				FROM threads t
+				JOIN users u ON t.user_id = u.id
+				JOIN user_profiles up ON t.user_id = up.id 
+				JOIN thread_tags tt ON t.id = tt.thread_id
+				JOIN thread_custom_tags tct ON t.id = tct.thread_id
+				WHERE tt.tag_id IN %s AND tct.custom_tag_id IN %s`, utils_db.ToInQueryForm[string](tags), utils_db.ToInQueryForm[int](customTagIDs))
+		} else if len(tags) > 0 && len(customTagIDs) == 0 {
+			query = fmt.Sprintf(`
+				SELECT DISTINCT
+					t.*, u.username, up.profile_picture_path
+				FROM threads t
+				JOIN users u ON t.user_id = u.id
+				JOIN user_profiles up ON t.user_id = up.id 
+				JOIN thread_tags tt ON t.id = tt.thread_id
+				WHERE tt.tag_id IN %s
+				ORDER BY %s %s
+				LIMIT $1 OFFSET $2`, utils_db.ToInQueryForm[string](tags), sortBy, order)
+			countQuery = fmt.Sprintf(`
+				SELECT COUNT(*)
+				FROM threads t
+				JOIN users u ON t.user_id = u.id
+				JOIN user_profiles up ON t.user_id = up.id 
+				JOIN thread_tags tt ON t.id = tt.thread_id
+				WHERE tt.tag_id IN %s`, utils_db.ToInQueryForm[string](tags))
+		} else if len(tags) == 0 && len(customTagIDs) > 0 {
+			query = fmt.Sprintf(`
+				SELECT DISTINCT
+					t.*, u.username, up.profile_picture_path
+				FROM threads t
+				JOIN users u ON t.user_id = u.id
+				JOIN user_profiles up ON t.user_id = up.id 
+				JOIN thread_custom_tags tct ON t.id = tct.thread_id
+				WHERE tct.custom_tag_id IN %s
+				ORDER BY %s %s
+				LIMIT $1 OFFSET $2`, utils_db.ToInQueryForm[int](customTagIDs), sortBy, order)
+			countQuery = fmt.Sprintf(`
+				SELECT COUNT(*)
+				FROM threads t
+				JOIN users u ON t.user_id = u.id
+				JOIN user_profiles up ON t.user_id = up.id 
+				JOIN thread_custom_tags tct ON t.id = tct.thread_id
+				WHERE tt.tag_id IN %s AND tct.custom_tag_id IN %s`, utils_db.ToInQueryForm[int](customTagIDs))
 		} else {
 			query = fmt.Sprintf(`
 				SELECT DISTINCT
-					t.*, u.username
+					t.*, u.username,  up.profile_picture_path
 				FROM threads t
 				JOIN users u ON t.user_id = u.id
-				JOIN thread_tags tt ON t.id = tt.thread_id
+				JOIN user_profiles up ON t.user_id = up.id
 				ORDER BY %s %s
-				LIMIT $1 OFFSET $2`, sort_by, order)
+				LIMIT $1 OFFSET $2`, sortBy, order)
+			countQuery = fmt.Sprintf(`
+				SELECT COUNT(*)
+				FROM threads t
+				JOIN users u ON t.user_id = u.id
+				JOIN user_profiles up ON t.user_id = up.id`)
 		}
 
-		threadList, err := utils_db.FetchAll[models.ThreadView](db, query, models.DEFAULT_PAGE_SIZE, (pageInt-1)*100)
+		// Fetch threads based on the query
+		threadList, err := utils_db.FetchAll[models.ThreadView](db, query, models.DEFAULT_PAGE_SIZE, (pageInt-1)*models.DEFAULT_PAGE_SIZE)
 		if err != nil {
-			c.Error(api_error.NewC(err, http.StatusInternalServerError))
+			c.Error(api_error.NewFromErr(err, http.StatusInternalServerError))
 			return
 		}
 
+		// Truncate the post content
 		for i := 0; i < len(threadList); i++ {
 			if len(threadList[i].OriginalPost) > 200 {
 				threadList[i].OriginalPost = threadList[i].OriginalPost[:200] + "..."
 			}
 		}
 
-		threadCount, err := utils_db.FetchOne[int](db, "SELECT COUNT(*) FROM threads")
+		/// Get total number of rows for the current query for pagination
+		threadCount, err := utils_db.FetchOne[int](db, countQuery)
 		if err != nil {
-			c.Error(api_error.NewC(err, http.StatusInternalServerError))
+			c.Error(api_error.NewFromErr(err, http.StatusInternalServerError))
 			return
 		}
 
@@ -309,7 +471,7 @@ func List() gin.HandlerFunc {
 			Response: threadList,
 			Pagination: models.Pagination{
 				CurrentPage: pageInt,
-				LastPage:    threadCount/100 + 1,
+				LastPage:    threadCount/models.DEFAULT_PAGE_SIZE + 1,
 				PageSize:    min(len(threadList), models.DEFAULT_PAGE_SIZE),
 			},
 		})
@@ -319,22 +481,24 @@ func List() gin.HandlerFunc {
 func Edit(c *gin.Context) {
 	db, userID := utils_handler.GetReqCx(c)
 
-	editedThread, err := utils_handler.GetObj[models.Thread](c)
-	if err != nil {
-		c.Error(api_error.NewC(err, http.StatusBadRequest))
+	threadID := c.Param("threadID")
+	if threadID == "" {
+		c.Error(api_error.NewFromStr("missing thread id", http.StatusBadRequest))
 		return
 	}
 
-	editedThread.UserID = userID
-	curTime := time.Now()
-	query := "UPDATE threads SET " +
-		"title = :title," +
-		"original_post = :original_post," +
-		"updated_date = :updated_date" +
-		"WHERE id = :id AND user_id = :user_id"
-	editedThread.UpdatedDate = &curTime
+	editedThread, err := utils_handler.GetObj[map[string]string](c)
+	if err != nil {
+		c.Error(api_error.NewFromErr(err, http.StatusBadRequest))
+		return
+	}
 
-	_, err = db.NamedExec(query, editedThread)
+	query := `
+		UPDATE threads 
+		SET title = $1, original_post = $2, updated_date = $3 
+		WHERE id = $4 AND user_id = $5
+	`
+	_, err = db.Exec(query, editedThread["title"], editedThread["original_post"], time.Now().UTC(), threadID, userID)
 	if err != nil {
 		c.Error(err)
 		return
@@ -360,6 +524,47 @@ func Delete(c *gin.Context) {
 	}
 
 	c.Status(http.StatusOK)
+}
+
+func Report(objectType string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		db, userID := utils_handler.GetReqCx(c)
+		objID := c.Param("objID")
+		objIDInt, err := strconv.Atoi(objID)
+		if err != nil {
+			c.Error(api_error.NewFromStr("invalid object id", http.StatusBadRequest))
+			return
+		}
+
+		report, err := utils_handler.GetStringMap(c)
+		if err != nil {
+			c.Error(api_error.NewFromStr("missing report body", http.StatusBadRequest))
+			return
+		}
+
+		var query string
+		switch objectType {
+		case "thread":
+			query = `
+			INSERT INTO reports(thread_id, reporter_id, report_reason) VALUES($1, $2, $3) RETURNING id
+			`
+		case "comment":
+			query = `
+			INSERT INTO reports(comment_id, reporter_id, report_reason) VALUES($1, $2, $3) RETURNING id
+			`
+		}
+
+		var reportID int
+		err = db.QueryRowx(query, objIDInt, userID, report["report_reason"]).Scan(&reportID)
+		if err != nil {
+			c.Error(err)
+			return
+		}
+
+		c.JSON(http.StatusCreated, gin.H{
+			"report_id": reportID,
+		})
+	}
 }
 
 func Tags(c *gin.Context) {

@@ -12,5 +12,5 @@ type PaginatedResponse[T any] struct {
 }
 
 const (
-	DEFAULT_PAGE_SIZE = 100
+	DEFAULT_PAGE_SIZE = 5
 )

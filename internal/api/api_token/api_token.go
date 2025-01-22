@@ -88,6 +88,12 @@ func RefreshToken(tokenType string) gin.HandlerFunc {
 					return
 				}
 
+				userProfile, err := utils_db.FetchOne[models.UserProfile](db, "SELECT * FROM user_profiles WHERE id = $1", storedUser.ID.String())
+				if err != nil {
+					c.Error(err)
+					return
+				}
+
 				c.JSON(http.StatusOK, gin.H{
 					"uuid":     storedUser.ID,
 					"username": storedUser.Username,
@@ -96,6 +102,7 @@ func RefreshToken(tokenType string) gin.HandlerFunc {
 						"username":     storedUser.Username,
 						"access_token": newAccessToken,
 					},
+					"profile":       userProfile,
 					"refresh_token": refreshToken,
 				})
 			}

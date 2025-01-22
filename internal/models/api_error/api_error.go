@@ -32,7 +32,7 @@ func New(e error, httpStatus int, message string) APIError {
 	}
 }
 
-func NewC(e error, httpStatus int) APIError {
+func NewFromErr(e error, httpStatus int) APIError {
 	return APIError{
 		error:      e,
 		httpStatus: httpStatus,

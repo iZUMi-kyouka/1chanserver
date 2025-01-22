@@ -21,6 +21,7 @@ type Thread struct {
 type ThreadView struct {
 	ID              int        `json:"id" db:"id"`
 	Username        string     `json:"username" db:"username"`
+	UserProfilePath *string    `json:"user_profile_path" db:"profile_picture_path"`
 	Channel         string     `json:"channel" db:"channel"`
 	Title           string     `json:"title" db:"title"`
 	OriginalPost    string     `json:"original_post" db:"original_post"`
@@ -34,9 +35,10 @@ type ThreadView struct {
 }
 
 type ThreadRequest struct {
-	Title        string `json:"title"`
-	OriginalPost string `json:"original_post"`
-	Tags         []Tag  `json:"tags"`
+	Title        string   `json:"title"`
+	OriginalPost string   `json:"original_post"`
+	Tags         []Tag    `json:"tags"`
+	CustomTags   []string `json:"custom_tags"`
 }
 
 func (t *Thread) IsOwnedBy(userID *uuid.UUID) bool {
