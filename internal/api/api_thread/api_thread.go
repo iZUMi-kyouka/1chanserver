@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/jmoiron/sqlx"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -93,7 +94,9 @@ func New(c *gin.Context) {
 			newThread.Tags[i].Id)
 	}
 
-	c.Status(http.StatusCreated)
+	c.JSON(http.StatusCreated, gin.H{
+		"id": threadID,
+	})
 }
 
 func View(page int) gin.HandlerFunc {
@@ -124,8 +127,23 @@ func View(page int) gin.HandlerFunc {
 			return
 		}
 
+		threadQuery := `
+			SELECT 
+				t.*, u.username, up.profile_picture_path,
+				array_to_string(array_agg(DISTINCT ct.tag) FILTER (WHERE ct.tag IS NOT NULL), ',') AS custom_tags,
+				array_to_string(array_agg(DISTINCT dt.id) FILTER (WHERE dt.id IS NOT NULL), ',') AS tags
+			FROM threads t
+			JOIN users u ON u.id = t.user_id
+			JOIN user_profiles up ON up.id = u.id
+			LEFT JOIN thread_custom_tags tct ON tct.thread_id = t.id
+			LEFT JOIN custom_tags ct ON ct.id = tct.custom_tag_id
+			LEFT JOIN thread_tags tt ON tt.thread_id = t.id
+			LEFT JOIN tags dt ON dt.id = tt.tag_id
+			WHERE t.id = $1 AND t.user_id = u.id
+			GROUP BY t.id, u.username, up.profile_picture_path
+			`
 		thread, err := utils_db.FetchOne[models.ThreadView](
-			db, "SELECT t.*, u.username, up.profile_picture_path FROM threads t, users u JOIN user_profiles up ON up.id = u.id WHERE t.id = $1 AND t.user_id = u.id", threadID)
+			db, threadQuery, threadID)
 		if err != nil {
 			c.Error(err)
 			return
@@ -170,10 +188,21 @@ func Search() gin.HandlerFunc {
 		}
 
 		searchQuery := threadReqQuery["q"]
-		if searchQuery == "" {
-			c.Error(api_error.NewFromStr("empty search query", http.StatusBadRequest))
-			return
-		}
+		whereClauseSearchQuery := func() string {
+			if searchQuery != "" {
+				return "t.search_vector @@ to_tsquery('english', $3)"
+			} else {
+				return ""
+			}
+		}()
+
+		whereClauseSearchCountQuery := func() string {
+			if searchQuery != "" {
+				return "t.search_vector @@ to_tsquery('english', $1)"
+			} else {
+				return ""
+			}
+		}()
 
 		tags := threadReqQuery["tags"].([]string)
 		customTags := threadReqQuery["custom_tags"].([]string)
@@ -187,138 +216,136 @@ func Search() gin.HandlerFunc {
 		sortBy := threadReqQuery["sort_by"].(string)
 		order := threadReqQuery["order"].(string)
 
-		var query string
-		var countQuery string
-
-		// Build the query according to listing parameters
-		if len(tags) > 0 && len(customTagIDs) > 0 {
-			query = fmt.Sprintf(`
-				WITH ranked_threads AS (
-					SELECT 	
-						t.*, 
-						ts_rank(t.search_vector, to_tsquery('english', $3)) AS rank, 
-						u.username, 
-						up.profile_picture_path
-					FROM threads t
-					JOIN users u ON t.user_id = u.id
-					JOIN user_profiles up ON t.user_id = up.id 
-					JOIN thread_tags tt ON t.id = tt.thread_id
-					JOIN thread_custom_tags tct ON t.id = tct.thread_id
-					WHERE t.search_vector @@ to_tsquery('english', $3) 
-					  AND tt.tag_id IN %s 
-					  AND tct.custom_tag_id IN %s
-				)
-				SELECT DISTINCT * 
-				FROM ranked_threads
-				ORDER BY %s %s
-				LIMIT $1 OFFSET $2`,
-				utils_db.ToInQueryForm[string](tags), utils_db.ToInQueryForm[int](customTagIDs), sortBy, order)
-			countQuery = fmt.Sprintf(`
-				SELECT COUNT(*)
-				FROM (
-					SELECT DISTINCT t.id
-					FROM threads t
-					JOIN users u ON t.user_id = u.id
-					JOIN user_profiles up ON t.user_id = up.id 
-					LEFT JOIN thread_tags tt ON t.id = tt.thread_id
-					LEFT JOIN thread_custom_tags tct ON t.id = tct.thread_id
-					WHERE t.search_vector @@ to_tsquery('english', $1)
-					  AND (tt.tag_id IN %s OR tct.custom_tag_id IN %s)
-				) AS unique_threads`, utils_db.ToInQueryForm[string](tags), utils_db.ToInQueryForm[int](customTagIDs))
-		} else if len(tags) > 0 && len(customTagIDs) == 0 {
-			query = fmt.Sprintf(`
-				WITH ranked_threads AS (
-					SELECT 	
-						t.*, 
-						ts_rank(t.search_vector, to_tsquery('english', $3)) AS rank, 
-						u.username, 
-						up.profile_picture_path
-					FROM threads t
-					JOIN users u ON t.user_id = u.id
-					JOIN user_profiles up ON t.user_id = up.id 
-					JOIN thread_tags tt ON t.id = tt.thread_id
-					WHERE t.search_vector @@ to_tsquery('english', $3) 
-					  AND tt.tag_id IN %s
-				)
-				SELECT DISTINCT * 
-				FROM ranked_threads
-				ORDER BY %s %s
-				LIMIT $1 OFFSET $2`,
-				utils_db.ToInQueryForm[string](tags), sortBy, order)
-			countQuery = fmt.Sprintf(`
-				SELECT COUNT(*)
-				FROM (
-					SELECT DISTINCT t.id
-					FROM threads t
-					JOIN users u ON t.user_id = u.id
-					JOIN user_profiles up ON t.user_id = up.id 
-					LEFT JOIN thread_tags tt ON t.id = tt.thread_id
-					WHERE t.search_vector @@ to_tsquery('english', $1)
-					  AND tt.tag_id IN %s
-				) AS unique_threads`, utils_db.ToInQueryForm[string](tags))
-		} else if len(tags) == 0 && len(customTagIDs) > 0 {
-			query = fmt.Sprintf(`
-				WITH ranked_threads AS (
-					SELECT 	
-						t.*, 
-						ts_rank(t.search_vector, to_tsquery('english', $3)) AS rank, 
-						u.username, 
-						up.profile_picture_path
-					FROM threads t
-					JOIN users u ON t.user_id = u.id
-					JOIN user_profiles up ON t.user_id = up.id
-					JOIN thread_custom_tags tct ON t.id = tct.thread_id
-					WHERE t.search_vector @@ to_tsquery('english', $3)
-					  AND tct.custom_tag_id IN %s
-				)
-				SELECT DISTINCT * 
-				FROM ranked_threads
-				ORDER BY %s %s
-				LIMIT $1 OFFSET $2`,
-				utils_db.ToInQueryForm[int](customTagIDs), sortBy, order)
-			countQuery = fmt.Sprintf(`
-				SELECT COUNT(*)
-				FROM (
-					SELECT DISTINCT t.id
-					FROM threads t
-					JOIN users u ON t.user_id = u.id
-					JOIN user_profiles up ON t.user_id = up.id 
-					LEFT JOIN thread_custom_tags tct ON t.id = tct.thread_id
-					WHERE t.search_vector @@ to_tsquery('english', $1)
-					  AND tct.custom_tag_id IN %s
-				) AS unique_threads`, utils_db.ToInQueryForm[int](customTagIDs))
-		} else {
-			query = fmt.Sprintf(`
-				WITH ranked_threads AS (
-					SELECT 	
-						t.*, 
-						ts_rank(t.search_vector, to_tsquery('english', $3)) AS rank, 
-						u.username, 
-						up.profile_picture_path
-					FROM threads t
-					JOIN users u ON t.user_id = u.id
-					JOIN user_profiles up ON t.user_id = up.id
-					WHERE t.search_vector @@ to_tsquery('english', $3)
-				)
-				SELECT DISTINCT * 
-				FROM ranked_threads
-				ORDER BY %s %s
-				LIMIT $1 OFFSET $2`,
-				sortBy, order)
-			countQuery = fmt.Sprintf(`
-				SELECT COUNT(*)
-				FROM (
-					SELECT DISTINCT t.id
-					FROM threads t
-					JOIN users u ON t.user_id = u.id
-					WHERE t.search_vector @@ to_tsquery('english', $1)
-				) AS unique_threads`)
+		// Building the WHERE clauses dynamically
+		whereClausesMainQuery := []string{}
+		whereClausesCountQuery := []string{}
+		if whereClauseSearchQuery != "" {
+			whereClausesMainQuery = append(whereClausesMainQuery, whereClauseSearchQuery)
+		}
+		if whereClauseSearchCountQuery != "" {
+			whereClausesCountQuery = append(whereClausesCountQuery, whereClauseSearchCountQuery)
 		}
 
+		if len(tags) > 0 {
+			whereClausesMainQuery = append(whereClausesMainQuery, fmt.Sprintf("tt.tag_id IN %s", utils_db.ToInQueryForm[string](tags)))
+			whereClausesCountQuery = append(whereClausesCountQuery, fmt.Sprintf("tt.tag_id IN %s", utils_db.ToInQueryForm[string](tags)))
+
+		}
+		if len(customTagIDs) > 0 {
+			whereClausesMainQuery = append(whereClausesMainQuery, fmt.Sprintf("tct.custom_tag_id IN %s", utils_db.ToInQueryForm[int](customTagIDs)))
+			whereClausesCountQuery = append(whereClausesCountQuery, fmt.Sprintf("tct.custom_tag_id IN %s", utils_db.ToInQueryForm[int](customTagIDs)))
+		}
+
+		whereClauseMainQuery := func() string {
+			if searchQuery == "" && len(customTagIDs) == 0 && len(tags) == 0 {
+				return ""
+			} else {
+				return fmt.Sprintf("WHERE %s", strings.Join(whereClausesMainQuery, " AND "))
+			}
+		}()
+
+		whereClauseCountQuery := func() string {
+			if searchQuery == "" && len(customTagIDs) == 0 && len(tags) == 0 {
+				return ""
+			} else {
+				return fmt.Sprintf("WHERE %s", strings.Join(whereClausesCountQuery, " AND "))
+			}
+		}()
+
+		customTagsJoinClause := func() string {
+			if len(customTags) > 0 {
+				return `
+					LEFT JOIN thread_custom_tags tct ON tct.thread_id = t.id
+					LEFT JOIN custom_tags ct ON ct.id = tct.custom_tag_id`
+			} else {
+				return ""
+			}
+		}()
+
+		tagsJoinClause := func() string {
+			if len(tags) > 0 {
+				return `
+				LEFT JOIN thread_tags tt ON tt.thread_id = t.id
+				LEFT JOIN tags dt ON dt.id = tt.tag_id`
+			} else {
+				return ""
+			}
+		}()
+
+		rankSelectClause := func() string {
+			if searchQuery != "" {
+				return "t.id, ts_rank(t.search_vector, to_tsquery('english', $3)) AS rank"
+			} else {
+				return "t.id"
+			}
+		}()
+
+		rankGroupByClause := func() string {
+			if searchQuery != "" {
+				return "GROUP BY t.id, u.username, up.profile_picture_path, rt.rank"
+			} else {
+				return "GROUP BY t.id, u.username, up.profile_picture_path"
+			}
+		}()
+
+		// Construct the main query
+		query := fmt.Sprintf(`
+			WITH ranked_threads AS (
+				SELECT %s
+				FROM threads t
+				JOIN users u ON t.user_id = u.id
+				JOIN user_profiles up ON t.user_id = up.id
+				%s
+				%s
+				%s
+			)
+			SELECT 	
+				t.*, 
+				u.username, 
+				up.profile_picture_path,
+				-- Aggregate the tags into arrays, ignoring NULLs
+				array_to_string(array_agg(DISTINCT ct.tag) FILTER (WHERE ct.tag IS NOT NULL), ',') AS custom_tags,
+				array_to_string(array_agg(DISTINCT dt.id) FILTER (WHERE dt.id IS NOT NULL), ',') AS tags		
+			FROM threads t
+			JOIN users u ON t.user_id = u.id
+			JOIN user_profiles up ON t.user_id = up.id
+			LEFT JOIN thread_tags tt ON tt.thread_id = t.id
+			LEFT JOIN tags dt ON dt.id = tt.tag_id
+			LEFT JOIN thread_custom_tags tct ON tct.thread_id = t.id
+			LEFT JOIN custom_tags ct ON ct.id = tct.custom_tag_id
+			JOIN ranked_threads rt ON rt.id = t.id
+			%s
+			ORDER BY %s %s
+			LIMIT $1 OFFSET $2
+			`,
+			rankSelectClause, customTagsJoinClause, tagsJoinClause, whereClauseMainQuery, rankGroupByClause, sortBy, order)
+		// Construct the count query
+		countQuery := fmt.Sprintf(`
+			SELECT COUNT(*)
+			FROM (
+				SELECT DISTINCT t.id
+				FROM threads t
+				JOIN users u ON t.user_id = u.id
+				JOIN user_profiles up ON t.user_id = up.id
+				%s
+				%s
+				%s
+			) AS unique_threads`, customTagsJoinClause, tagsJoinClause, whereClauseCountQuery)
+
 		// Fetch threads based on the query
-		threadList, err := utils_db.FetchAll[models.ThreadView](db, query, models.DEFAULT_PAGE_SIZE, (pageInt-1)*models.DEFAULT_PAGE_SIZE, searchQuery)
+		log.Println(query)
+		log.Println(countQuery)
+
+		threadList, err := func() ([]models.ThreadView, error) {
+			if searchQuery != "" {
+				return utils_db.FetchAll[models.ThreadView](db, query, models.DEFAULT_PAGE_SIZE, (pageInt-1)*models.DEFAULT_PAGE_SIZE, searchQuery)
+			} else {
+				return utils_db.FetchAll[models.ThreadView](db, query, models.DEFAULT_PAGE_SIZE, (pageInt-1)*models.DEFAULT_PAGE_SIZE)
+			}
+		}()
+
 		if err != nil {
-			c.Error(api_error.NewFromErr(err, http.StatusInternalServerError))
+			c.Error(api_error.New(err, http.StatusInternalServerError, query))
 			return
 		}
 
@@ -329,13 +356,21 @@ func Search() gin.HandlerFunc {
 			}
 		}
 
-		/// Get total number of rows for the current query for pagination
-		threadCount, err := utils_db.FetchOne[int](db, countQuery, searchQuery)
+		// Get total number of rows for the current query for pagination
+		threadCount, err := func() (int, error) {
+			if searchQuery != "" {
+				return utils_db.FetchOne[int](db, countQuery, searchQuery)
+			} else {
+				return utils_db.FetchOne[int](db, countQuery)
+			}
+		}()
+
 		if err != nil {
-			c.Error(api_error.NewFromErr(err, http.StatusInternalServerError))
+			c.Error(api_error.New(err, http.StatusInternalServerError, countQuery))
 			return
 		}
 
+		// Send response
 		c.JSON(http.StatusOK, models.PaginatedResponse[models.ThreadView]{
 			Response: threadList,
 			Pagination: models.Pagination{
@@ -509,14 +544,14 @@ func Edit(c *gin.Context) {
 
 func Delete(c *gin.Context) {
 	db, userID := utils_handler.GetReqCx(c)
-	threadID := c.Param("thread_id")
+	threadID := c.Param("threadID")
 	if threadID == "" {
 		c.Error(api_error.NewFromStr("missing thread id", http.StatusBadRequest))
 		return
 	}
 
 	_, err := db.Exec(
-		"DELETE FROM threads WHERE id = $1 AND user_id $2 ",
+		"DELETE FROM threads WHERE id = $1 AND user_id = $2",
 		threadID, userID)
 	if err != nil {
 		c.Error(err)

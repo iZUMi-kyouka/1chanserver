@@ -174,6 +174,6 @@ func ValidateRefreshToken(db *sqlx.DB, userID uuid.UUID, givenRefreshToken strin
 }
 
 func SetAccessAndRefreshToken(c *gin.Context, refreshToken string, accessToken string) {
-	c.SetCookie("Refresh-Token", refreshToken, 3600*24*14, "/", "", false, true)
+	c.SetCookie("Refresh-Token", refreshToken, 3600*24*14, "/", "", true, true)
 	c.SetCookie("Authorization", fmt.Sprintf("Bearer %s", accessToken), 60*10, "/", "", false, false)
 }

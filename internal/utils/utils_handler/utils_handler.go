@@ -59,13 +59,17 @@ func GetThreadReqQuery(c *gin.Context, tableAlias string, defaultSortCriteria st
 	page := c.DefaultQuery("page", "1")
 	tags := c.Query("tags")
 	customTags := c.Query("custom_tags")
-	sort_by := c.DefaultQuery("sort_by", defaultSortCriteria)
 	order := c.DefaultQuery("order", "desc")
 	q := c.Query("q")
 
 	reqQuery := make(map[string]interface{})
 
 	reqQuery["q"] = q
+	if q == "" {
+		defaultSortCriteria = "views"
+	}
+
+	sort_by := c.DefaultQuery("sort_by", defaultSortCriteria)
 
 	// Handle page
 	var pageInt int

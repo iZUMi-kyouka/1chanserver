@@ -57,7 +57,7 @@ CREATE TABLE channels (
     id BIGSERIAL PRIMARY KEY,
     name TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT 'Welcome to this channel!',
-    channel_picture_path TEXT NOT NULL DEFAULT '/public/ch_placeholder.png'
+    channel_picture_path TEXT
 );
 
 -- Threads
@@ -160,7 +160,27 @@ CREATE TABLE reports (
     CHECK (thread_id IS NOT NULL OR comment_id IS NOT NULL)
 );
 
+-- Indexes the search vector for threads and comments
+
 CREATE INDEX comments_search_vector_idx ON comments USING gin(search_vector);
+CREATE INDEX threads_search_vector_idx ON threads USING gin(search_vector);
+
+-- Trigger function to update threads table's search vector
+
+CREATE OR REPLACE FUNCTION update_thread_search_vector()
+    RETURNS TRIGGER AS $$
+BEGIN
+    NEW.search_vector := to_tsvector('english', NEW.title || ' ' || NEW.original_post);
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trigger_update_thread_search_vector
+    BEFORE INSERT OR UPDATE ON threads
+    FOR EACH ROW
+EXECUTE FUNCTION update_thread_search_vector();
+
+-- Trigger function to update comments table's search vector
 
 CREATE OR REPLACE FUNCTION update_comment_search_vector()
     RETURNS TRIGGER AS $$
@@ -174,6 +194,8 @@ CREATE TRIGGER trigger_update_comment_search_vector
     BEFORE INSERT OR UPDATE ON comments
     FOR EACH ROW
 EXECUTE FUNCTION update_comment_search_vector();
+
+-- Trigger function to update user's comment count
 
 CREATE OR REPLACE FUNCTION update_user_comment_count()
     RETURNS TRIGGER AS $$
@@ -197,7 +219,32 @@ CREATE TRIGGER user_comment_count_update
     FOR EACH ROW
 EXECUTE FUNCTION update_user_comment_count();
 
+-- Trigger function to update user's post count
+
+CREATE OR REPLACE FUNCTION update_user_post_count()
+    RETURNS TRIGGER AS $$
+BEGIN
+    IF (TG_OP) = 'INSERT' THEN
+        UPDATE user_profiles
+        SET post_count = post_count + 1
+        WHERE id = NEW.user_id;
+    ELSEIF (TG_OP = 'DELETE') THEN
+        UPDATE user_profiles
+        SET post_count = post_count - 1
+        WHERE id = NEW.user_id;
+    END IF;
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER user_post_count_update
+    AFTER INSERT OR DELETE
+    ON threads
+    FOR EACH ROW
+EXECUTE FUNCTION update_user_post_count();
+
 -- User Auxiliary Tables
+
 CREATE TABLE user_search_history(
     id BIGSERIAL PRIMARY KEY,
     user_id UUID NOT NULL,
@@ -231,6 +278,9 @@ CREATE TABLE user_thread_likes (
     PRIMARY KEY (user_id, thread_id)
 );
 
+-- Trigger functions to update threads' like and dislike count
+-- whenever user_thread_likes table is updated / inserted into
+
 CREATE OR REPLACE FUNCTION update_thread_like_count()
     RETURNS TRIGGER AS $$
 BEGIN
@@ -257,6 +307,15 @@ BEGIN
     RETURN NULL;
 END;
 $$ LANGUAGE plpgsql;
+
+CREATE TRIGGER user_thread_like_count_update
+    AFTER INSERT OR DELETE OR UPDATE
+    ON user_thread_likes
+    FOR EACH ROW
+EXECUTE FUNCTION update_thread_like_count();
+
+-- Trigger functions to update comments' like and dislike count
+-- whenever user_comment_likes table is updated / inserted into
 
 CREATE OR REPLACE FUNCTION update_comment_like_count()
     RETURNS TRIGGER AS $$
@@ -285,6 +344,33 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+CREATE TRIGGER user_comment_like_count_update
+    AFTER INSERT OR DELETE OR UPDATE
+    ON user_comment_likes
+    FOR EACH ROW
+EXECUTE FUNCTION update_comment_like_count();
+
+-- Trigger function to update the last_comment_timestamp column every time
+-- a new comment is added to a thread
+
+CREATE OR REPLACE FUNCTION update_thread_last_comment_timestamp()
+    RETURNS TRIGGER AS $$
+BEGIN
+    UPDATE threads
+    SET last_comment_date = CURRENT_TIMESTAMP AT TIME ZONE 'UTC'
+    WHERE threads.id = NEW.thread_id;
+    RETURN NEW;
+end;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER set_thread_last_comment_timestamp
+    AFTER INSERT ON comments
+    FOR EACH ROW
+EXECUTE FUNCTION update_thread_last_comment_timestamp();
+
+-- Trigger functions to update threads' comment count
+-- whenever comments table is deleted from / inserted into
+
 CREATE OR REPLACE FUNCTION update_thread_comment_count()
 RETURNS TRIGGER AS $$
     BEGIN
@@ -307,32 +393,7 @@ CREATE TRIGGER user_thread_comment_count_update
     FOR EACH ROW
 EXECUTE FUNCTION update_thread_comment_count();
 
-CREATE TRIGGER user_thread_like_count_update
-    AFTER INSERT OR DELETE OR UPDATE
-    ON user_thread_likes
-    FOR EACH ROW
-EXECUTE FUNCTION update_thread_like_count();
-
-CREATE TRIGGER user_comment_like_count_update
-    AFTER INSERT OR DELETE OR UPDATE
-    ON user_comment_likes
-    FOR EACH ROW
-EXECUTE FUNCTION update_comment_like_count();
-
-CREATE INDEX threads_search_vector_idx ON threads USING gin(search_vector);
-
-CREATE OR REPLACE FUNCTION update_thread_search_vector()
-RETURNS TRIGGER AS $$
-    BEGIN
-        NEW.search_vector := to_tsvector('english', NEW.title || ' ' || NEW.original_post);
-        RETURN NEW;
-    END;
-    $$ LANGUAGE plpgsql;
-
-CREATE TRIGGER trigger_update_thread_search_vector
-    BEFORE INSERT OR UPDATE ON threads
-    FOR EACH ROW
-    EXECUTE FUNCTION update_thread_search_vector();
+-- Tags and custom tags
 
 CREATE TABLE tags (
     id SERIAL PRIMARY KEY,
@@ -344,45 +405,26 @@ CREATE TABLE custom_tags (
     tag TEXT NOT NULL
 );
 
-CREATE UNIQUE INDEX idx_custom_tags_tag ON custom_tags(tag);
-
 CREATE TABLE thread_custom_tags (
     thread_id BIGINT,
     custom_tag_id BIGINT,
-    FOREIGN KEY (thread_id) REFERENCES threads(id),
+    FOREIGN KEY (thread_id) REFERENCES threads(id) ON DELETE CASCADE,
     FOREIGN KEY (custom_tag_id) REFERENCES custom_tags(id)
 );
 
+-- Indexes
+
+CREATE UNIQUE INDEX idx_custom_tags_tag ON custom_tags(tag);
 CREATE INDEX idx_thread_custom_tags ON thread_custom_tags(custom_tag_id);
 
-CREATE OR REPLACE FUNCTION update_user_post_count()
-    RETURNS TRIGGER AS $$
-    BEGIN
-        IF (TG_OP) = 'INSERT' THEN
-            UPDATE user_profiles
-            SET post_count = post_count + 1
-            WHERE id = NEW.user_id;
-        ELSEIF (TG_OP = 'DELETE') THEN
-            UPDATE user_profiles
-            SET post_count = post_count - 1
-            WHERE id = NEW.user_id;
-        END IF;
-        RETURN NULL;
-    END;
-    $$ LANGUAGE plpgsql;
-
-CREATE TRIGGER user_post_count_update
-    AFTER INSERT OR DELETE
-    ON threads
-    FOR EACH ROW
-EXECUTE FUNCTION update_user_post_count();
+-- Thread auxiliary tables
 
 CREATE TABLE thread_tags (
     thread_id INT,
     tag_id INT,
     PRIMARY KEY (thread_id, tag_id),
     FOREIGN KEY (thread_id) REFERENCES threads(id) ON DELETE CASCADE,
-    FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
+    FOREIGN KEY (tag_id) REFERENCES tags(id)
 );
 
 CREATE TABLE thread_channels (
@@ -393,44 +435,29 @@ CREATE TABLE thread_channels (
      FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE
 );
 
-CREATE OR REPLACE FUNCTION update_thread_last_comment_timestamp()
-RETURNS TRIGGER AS $$
-    BEGIN
-        UPDATE threads
-        SET last_comment_date = CURRENT_TIMESTAMP AT TIME ZONE 'UTC'
-        WHERE threads.id = NEW.thread_id;
-        RETURN NEW;
-    end;
-    $$ LANGUAGE plpgsql;
+-- Insert default tags
 
-CREATE TRIGGER set_thread_last_comment_timestamp
-    BEFORE UPDATE ON comments
-    FOR EACH ROW
-    EXECUTE FUNCTION update_thread_last_comment_timestamp();
-
-
-
--- INSERT INTO tags (id, tag) VALUES
---                                (0, 'Technology'),
---                                (1, 'Gaming'),
---                                (2, 'Entertainment'),
---                                (3, 'Lifestyle'),
---                                (4, 'Education'),
---                                (5, 'Community'),
---                                (6, 'Business'),
---                                (7, 'Hobbies'),
---                                (8, 'Science'),
---                                (9, 'Sports'),
---                                (10, 'Creative Arts'),
---                                (11, 'Politics'),
---                                (12, 'DIY & Crafting'),
---                                (13, 'Automobiles'),
---                                (14, 'Pets & Animals'),
---                                (15, 'Health & Wellness'),
---                                (16, 'Work & Productivity'),
---                                (17, 'Travel'),
---                                (18, 'Food & Drinks');
---
+INSERT INTO tags (id, tag) VALUES
+                               (0, 'Technology'),
+                               (1, 'Gaming'),
+                               (2, 'Entertainment'),
+                               (3, 'Lifestyle'),
+                               (4, 'Education'),
+                               (5, 'Community'),
+                               (6, 'Business'),
+                               (7, 'Hobbies'),
+                               (8, 'Science'),
+                               (9, 'Sports'),
+                               (10, 'Creative Arts'),
+                               (11, 'Politics'),
+                               (12, 'DIY & Crafting'),
+                               (13, 'Automobiles'),
+                               (14, 'Pets & Animals'),
+                               (15, 'Health & Wellness'),
+                               (16, 'Work & Productivity'),
+                               (17, 'Travel'),
+                               (18, 'Food & Drinks');
+-- SAMPLE DATA
 -- INSERT INTO users(id, username, password_hash) VALUES
 --    ('23cdeffc-1c44-41e6-ab0b-001e6591b01f', 'kyo73', '$argon2id$v=19$m=65536,t=1,p=2$RdTX6X6yI9aNSDqsIEy5Aw$LA1cB0j7vDUzv21NQz8fvAvAtXRsdfHIioGKJ3e38Oo');
 --

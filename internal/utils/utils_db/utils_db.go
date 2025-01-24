@@ -172,7 +172,7 @@ func SortCriteriaToDBColumn(s string) (string, error) {
 	case "dislikes":
 		return "dislike_count", nil
 	case "date":
-		return "date", nil
+		return "creation_date", nil
 	default:
 		return "", api_error.NewFromStr("invalid sort criteria", http.StatusBadRequest)
 	}

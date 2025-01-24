@@ -1,11 +1,14 @@
 package middleware
 
-import "github.com/gin-gonic/gin"
+import (
+	"github.com/gin-contrib/cors"
+	"github.com/gin-gonic/gin"
+)
 
 func CORS() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-		c.Writer.Header().Set("Access-Control-Allow-Credentials", "*")
-		c.Next()
-	}
+	config := cors.DefaultConfig()
+	config.AddAllowHeaders("Authorization", "Device-ID")
+	config.AllowCredentials = true
+	config.AllowOrigins = []string{"http://localhost:3000", "https://localhost:3000"} // Change to public address of frontend instance
+	return cors.New(config)
 }

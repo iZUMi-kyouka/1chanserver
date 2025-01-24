@@ -4,6 +4,7 @@ import (
 	"1chanserver/internal/api/api_comment"
 	"1chanserver/internal/api/api_dev"
 	"1chanserver/internal/api/api_files"
+	"1chanserver/internal/api/api_notification"
 	"1chanserver/internal/api/api_thread"
 	"1chanserver/internal/api/api_token"
 	"1chanserver/internal/api/api_user"
@@ -15,7 +16,6 @@ import (
 	"1chanserver/internal/utils/utils_auth"
 	"errors"
 	"fmt"
-	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/jmoiron/sqlx"
 	"github.com/joho/godotenv"
@@ -37,26 +37,20 @@ func main() {
 	routes.APIRoot = routes.BaseURL + routes.BaseAPI
 	utils_auth.JWT_SECRET_KEY = []byte(os.Getenv("JWT_SECRET_KEY"))
 
+	// Initialise database
 	database.InitDB()
 
+	// Use middlewares
 	r := gin.Default()
-
-	config := cors.DefaultConfig()
-	config.AddAllowHeaders("Authorization", "Device-ID")
-	config.AllowCredentials = true
-	config.AllowOrigins = []string{"http://localhost:3000"}
-	r.Use(cors.New(config))
-
+	r.Use(middleware.CORS())
 	r.Use(
 		middleware.PanicRecovery(),
 		middleware.RequestIDProvider(),
 		middleware.ErrorLogging(),
 		middleware.ErrorHandler())
-	r.Use(func(c *gin.Context) {
-		c.Set("db", database.DB)
-		c.Next()
-	})
+	r.Use(middleware.DBProvider(database.DB))
 
+	// Use routes
 	{
 		v1 := r.Group("/api/v1")
 		v1.GET("/healthcheck", api_dev.HealthCheck)
@@ -76,7 +70,7 @@ func main() {
 			{
 				usersAuth.GET("/logout", api_user.Logout)
 				usersAuth.GET("/likes", api_user.Likes)
-				usersAuth.GET("/profile", api_user.GetProfile())
+				usersAuth.GET("/profile", api_user.GetProfile(true))
 				usersAuth.POST("/profile", api_user.UpdateProfile)
 				usersAuth.GET("/threads", api_user.Threads())
 				usersAuth.GET("/comments", api_user.Comments())
@@ -86,6 +80,7 @@ func main() {
 
 			users.POST("/login", api_user.Login)
 			users.POST("/register", api_user.Register)
+			users.GET("/profile/:username", api_user.GetProfile(false))
 			users.GET("/refresh_new", api_token.RefreshToken("first"))
 			users.GET("/refresh", api_token.RefreshToken("continue"))
 		}
@@ -98,7 +93,7 @@ func main() {
 				threadsAuth.PUT("/like/:objID", api_comment.HandleLikeDislike(1, "user_thread_likes"))
 				threadsAuth.PUT("/dislike/:objID", api_comment.HandleLikeDislike(0, "user_thread_likes"))
 				threadsAuth.PATCH("/edit/:threadID", api_thread.Edit)
-				threadsAuth.DELETE("/delete/:threadID", api_thread.Delete)
+				threadsAuth.DELETE("/:threadID", api_thread.Delete)
 				threadsAuth.POST("/report/:objID", api_thread.Report("thread"))
 			}
 
@@ -116,7 +111,7 @@ func main() {
 			{
 				commentsAuth.POST("/new/:threadID", api_comment.New)
 				commentsAuth.PATCH("/edit/:commentID", api_comment.Edit)
-				commentsAuth.DELETE("/delete", api_comment.Delete)
+				commentsAuth.DELETE("/:commentID", api_comment.Delete)
 				commentsAuth.PUT("/like/:objID", api_comment.HandleLikeDislike(1, "user_comment_likes"))
 				commentsAuth.PUT("/dislike/:objID", api_comment.HandleLikeDislike(0, "user_comment_likes"))
 				commentsAuth.POST("/report/:objID", api_thread.Report("comment"))
@@ -138,6 +133,11 @@ func main() {
 			//uploadAuth := upload.Group("/", middleware.Auth())
 			upload.POST("/image", api_files.Upload("image"))
 
+		}
+
+		notifications := v1.Group("/notifications")
+		{
+			notifications.GET("/notifications", api_notification.GetGlobalNotifications())
 		}
 
 		r.Static("/files", "./public/uploads")

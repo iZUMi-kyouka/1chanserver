@@ -19,7 +19,7 @@ type Comment struct {
 type CommentView struct {
 	ID              int64      `json:"id" db:"id"`
 	Username        string     `json:"username" db:"username"`
-	UserProfilePath string     `json:"user_profile_path" db:"profile_picture_path"`
+	UserProfilePath *string    `json:"user_profile_path" db:"profile_picture_path"`
 	Comment         string     `json:"comment" db:"comment"`
 	CreationDate    time.Time  `json:"creation_date" db:"creation_date"`
 	UpdatedDate     *time.Time `json:"updated_date" db:"updated_date"`

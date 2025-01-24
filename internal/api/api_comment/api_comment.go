@@ -35,15 +35,18 @@ func New(c *gin.Context) {
 	}
 
 	comment := commentRequest["comment"]
+	var commentID int
 
-	query := "INSERT INTO comments (thread_id, user_id, comment) VALUES ($1, $2, $3)"
-	_, err = db.Exec(query, threadIDInt, userID, comment)
+	query := "INSERT INTO comments (thread_id, user_id, comment) VALUES ($1, $2, $3) RETURNING id"
+	err = db.QueryRowx(query, threadIDInt, userID, comment).Scan(&commentID)
 	if err != nil {
 		c.Error(err)
 		return
 	}
 
-	c.Status(http.StatusCreated)
+	c.JSON(http.StatusCreated, gin.H{
+		"id": commentID,
+	})
 }
 
 func Edit(c *gin.Context) {
@@ -133,15 +136,15 @@ func List() gin.HandlerFunc {
 
 func Delete(c *gin.Context) {
 	db, userID := utils_handler.GetReqCx(c)
-	comment, err := utils_handler.GetObj[models.Comment](c)
-	if err != nil {
-		c.Error(api_error.NewFromStr("invalid obj", http.StatusBadRequest))
+	commentID := c.Param("commentID")
+
+	if commentID == "" {
+		c.Error(api_error.NewFromStr("missing comment id", http.StatusBadRequest))
 		return
 	}
 
-	comment.UserID = userID
-	query := "DELETE FROM comments WHERE id = :id AND user_id = :user_id"
-	_, err = db.NamedExec(query, comment)
+	query := "DELETE FROM comments WHERE id = $1 AND user_id = $2"
+	_, err := db.Exec(query, commentID, userID)
 	if err != nil {
 		c.Error(err)
 		return

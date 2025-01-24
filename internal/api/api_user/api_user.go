@@ -91,7 +91,7 @@ func Register(c *gin.Context) {
 		return
 	}
 
-	utils_auth.SetAccessAndRefreshToken(c, refreshToken, accessToken)
+	c.SetCookie("Refresh-Token", refreshToken, 3600*24*14, "/", "", true, true)
 
 	c.JSON(http.StatusOK, gin.H{
 		"uuid": newUser.ID,
@@ -209,7 +209,7 @@ func Login(c *gin.Context) {
 		return
 	}
 
-	c.SetCookie("Refresh-Token", refreshToken, 3600*24*14, "/", "", false, true)
+	c.SetCookie("Refresh-Token", refreshToken, 3600*24*14, "/", "", true, true)
 
 	c.JSON(http.StatusOK, gin.H{
 		"uuid":     storedUser.ID,
@@ -273,11 +273,32 @@ func UpdateProfile(c *gin.Context) {
 	return
 }
 
-func GetProfile() gin.HandlerFunc {
+func GetProfile(isOwner bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		db, userID := utils_handler.GetReqCx(c)
-		profile, err := utils_db.FetchOne[models.UserProfile](
-			db, "SELECT * FROM user_profiles WHERE id = $1", userID)
+		var userID uuid.UUID
+		var db *sqlx.DB
+
+		if isOwner {
+			db, userID = utils_handler.GetReqCx(c)
+		} else {
+			db = c.MustGet("db").(*sqlx.DB)
+		}
+
+		var query string
+		var profile models.UserProfile
+		var err error
+
+		username := c.Param("username")
+		if isOwner {
+			query = "SELECT * FROM user_profiles WHERE id = $1"
+			profile, err = utils_db.FetchOne[models.UserProfile](
+				db, query, userID)
+		} else {
+			query = "SELECT * FROM user_profiles up, users u WHERE u.id = up.id AND u.username = $1"
+			profile, err = utils_db.FetchOne[models.UserProfile](
+				db, query, username)
+		}
+
 		if err != nil {
 			c.Error(err)
 			return

@@ -1,6 +1,7 @@
 package api_error
 
 import (
+	"database/sql"
 	"errors"
 	"github.com/gin-gonic/gin"
 	"net/http"
@@ -61,6 +62,11 @@ func ToResponse(c *gin.Context, e error) {
 				"description": currentErr.Error(),
 			})
 		}
+	} else if errors.Is(e, sql.ErrNoRows) {
+		c.JSON(http.StatusNotFound, gin.H{
+			"message":     e.Error(),
+			"description": "the requested resource cannot be found",
+		})
 	} else {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"description": e.Error(),
