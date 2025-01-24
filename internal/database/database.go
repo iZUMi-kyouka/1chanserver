@@ -10,7 +10,7 @@ var DB (*sqlx.DB)
 
 func InitDB() {
 	var err error
-	DB, err = sqlx.Connect("postgres", "user=izumikyouka001 dbname=forum sslmode=disable password=izumikyouka001 host=localhost")
+	DB, err = sqlx.Connect("postgres", "user=postgres sslmode=prefer dbname=forum password=IzumiKyouka071534. host=onechandb.chckaa4wm4hz.ap-southeast-1.rds.amazonaws.com")
 	DB = DB.Unsafe()
 
 	if err != nil {
