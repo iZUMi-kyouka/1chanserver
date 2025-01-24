@@ -9,6 +9,6 @@ func CORS() gin.HandlerFunc {
 	config := cors.DefaultConfig()
 	config.AddAllowHeaders("Authorization", "Device-ID")
 	config.AllowCredentials = true
-	config.AllowOrigins = []string{"http://localhost:3000", "https://localhost:3000"} // Change to public address of frontend instance
+	config.AllowOrigins = []string{"http://localhost:3000", "https://localhost:3000", "http://54.169.160.55:3000"} // Change to public address of frontend instance
 	return cors.New(config)
 }
