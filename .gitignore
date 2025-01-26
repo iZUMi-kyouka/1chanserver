@@ -2,8 +2,8 @@
 tree
 roselala.sql
 public
-frontend
 insert_sample_data.sh
 reset_db.sh
 run_server.sh
 run_server_fresh.sh
+frontend
