@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/jmoiron/sqlx"
-	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -82,13 +81,26 @@ func List() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		db := c.MustGet("db").(*sqlx.DB)
 
+		order := c.DefaultQuery("order", "desc")
+		sort_by := c.DefaultQuery("sort_by", "likes")
+		sortParamDB, err := utils_db.SortCriteriaToDBColumnWithAlias(sort_by, "c")
+		if err != nil {
+			c.Error(err)
+			return
+		}
+
+		if order != "desc" && order != "asc" {
+			c.Error(api_error.NewFromStr("invalid order", http.StatusBadRequest))
+			return
+		}
+
 		threadID := c.Param("threadID")
 		if threadID == "" {
 			c.Error(api_error.NewFromStr("missing thread id", http.StatusBadRequest))
 			return
 		}
 
-		page := c.DefaultQuery("p", "1")
+		page := c.DefaultQuery("page", "1")
 		pageInt, err := strconv.Atoi(page)
 		if err != nil {
 			c.Error(api_error.NewFromStr("invalid page", http.StatusBadRequest))
@@ -96,17 +108,19 @@ func List() gin.HandlerFunc {
 		}
 		//sort := c.DefaultQuery("sort", "likes")
 
-		query := `
+		query := fmt.Sprintf(`
 			SELECT 
-				c.id, u.username, c.comment, c.creation_date, 
+				c.id, u.username, up.profile_picture_path, c.comment, c.creation_date, 
 				c.updated_date, c.like_count, c.dislike_count
-			FROM users u, comments c
+			FROM comments c
+			JOIN users u ON c.user_id = u.id
+			JOIN user_profiles up ON c.user_id = up.id
 			WHERE
-				c.thread_id = $1 AND c.user_id = u.id
+				c.thread_id = $1
 			ORDER BY
-				c.like_count DESC
+				%s %s
 			LIMIT $2 OFFSET $3
-			`
+			`, sortParamDB, order)
 
 		comments, err := utils_db.FetchAll[models.CommentView](db, query,
 			threadID, models.DEFAULT_PAGE_SIZE, (pageInt-1)*models.DEFAULT_PAGE_SIZE)
@@ -125,8 +139,8 @@ func List() gin.HandlerFunc {
 			Response: comments,
 			Pagination: models.Pagination{
 				CurrentPage: pageInt,
-				PageSize:    models.DEFAULT_PAGE_SIZE,
-				LastPage:    commentsCount,
+				PageSize:    min(len(comments), models.DEFAULT_PAGE_SIZE),
+				LastPage:    commentsCount/models.DEFAULT_PAGE_SIZE + 1,
 			},
 		})
 
@@ -197,10 +211,10 @@ func HandleLikeDislike(v int, tableName string) gin.HandlerFunc {
 			case 0:
 				var query string
 				if v == 1 {
-					log.Printf("is disliked, now updating to like.")
+					//log.Printf("is disliked, now updating to like.")
 					query = fmt.Sprintf("UPDATE %s SET variant = 1 WHERE user_id = $1 AND %s = $2", tableName, columnName)
 				} else {
-					log.Printf("already disliked, now canceling dislike")
+					//log.Printf("already disliked, now canceling dislike")
 					query = fmt.Sprintf("DELETE FROM %s WHERE user_id = $1 AND %s = $2", tableName, columnName)
 				}
 
@@ -213,10 +227,10 @@ func HandleLikeDislike(v int, tableName string) gin.HandlerFunc {
 			case 1:
 				var query string
 				if v == 0 {
-					log.Printf("is disliked, now updating to like.")
+					//log.Printf("is disliked, now updating to like.")
 					query = fmt.Sprintf("UPDATE %s SET variant = 0 WHERE user_id = $1 AND %s = $2", tableName, columnName)
 				} else {
-					log.Printf("already liked, now canceling like.")
+					//log.Printf("already liked, now canceling like.")
 					query = fmt.Sprintf("DELETE FROM %s WHERE user_id = $1 AND %s = $2", tableName, columnName)
 				}
 

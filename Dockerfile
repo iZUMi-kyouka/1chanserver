@@ -29,11 +29,15 @@ WORKDIR /root/
 # Copy the built binary and required files from the build stage
 COPY --from=builder /app/server .
 COPY --from=builder /app/*.sql ./
-COPY --from=builder /app/*.sh ./
+
 COPY .env .
+RUN mkdir public
+RUN mkdir public/uploads
+RUN mkdir public/uploads/profile_pictures
 
 # Expose the port your app listens only
 EXPOSE 8080
 
 # Command to run the app
+ENV GIN_MODE=release
 CMD ["./server"]

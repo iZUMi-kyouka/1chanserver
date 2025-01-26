@@ -125,22 +125,47 @@ CREATE TABLE user_poll_votes (
 
 -- Direct Messaging
 CREATE TABLE direct_messages (
+    message_id BIGINT NOT NULL,
     user_a_id UUID NOT NULL,
     user_b_id UUID NOT NULL,
     creation_date TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (user_a_id, user_b_id),
+    PRIMARY KEY (message_id, user_a_id, user_b_id),
     CONSTRAINT consistent_parties CHECK (user_a_id < user_b_id),
     FOREIGN KEY (user_a_id) REFERENCES users(id),
     FOREIGN KEY (user_b_id) REFERENCES users(id)
 );
 
-CREATE TABLE messages (
-    sender_id UUID NOT NULL,
-    recipient_id UUID NOT NULL,
-    content TEXT NOT NULL,
-    creation_date TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (sender_id, recipient_id, creation_date)
-);
+-- Trigger function to automatically asign increasing message_id for
+-- each unique pair of sender and receiver
+
+CREATE OR REPLACE FUNCTION assign_message_id()
+    RETURNS TRIGGER AS $$
+BEGIN
+    -- Calculate the next message_id for the given user pair
+    SELECT COALESCE(MAX(message_id), 0) + 1
+    INTO NEW.message_id
+    FROM direct_messages
+    WHERE user_a_id = NEW.user_a_id AND user_b_id = NEW.user_b_id;
+
+    -- Return the modified NEW record
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER set_message_id
+    BEFORE INSERT ON direct_messages
+    FOR EACH ROW
+EXECUTE FUNCTION assign_message_id();
+
+
+-- CREATE TABLE messages (
+--
+--     sender_id UUID NOT NULL,
+--     recipient_id UUID NOT NULL,
+--     content TEXT NOT NULL,
+--     creation_date TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+--     PRIMARY KEY (sender_id, recipient_id, creation_date)
+-- );
 
 -- Reports
 CREATE TABLE reports (

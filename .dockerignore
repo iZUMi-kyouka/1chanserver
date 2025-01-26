@@ -3,3 +3,9 @@ tree
 roselala.sql
 public
 frontend
+reset_db.sh
+insert_sample_data.sh
+run_server.sh
+run_server_fresh.sh
+sample_data.sql
+.gitignore

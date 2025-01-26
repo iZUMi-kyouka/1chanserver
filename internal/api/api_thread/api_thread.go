@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/jmoiron/sqlx"
-	"log"
+	//"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -333,8 +333,8 @@ func Search() gin.HandlerFunc {
 			) AS unique_threads`, customTagsJoinClause, tagsJoinClause, whereClauseCountQuery)
 
 		// Fetch threads based on the query
-		log.Println(query)
-		log.Println(countQuery)
+		//log.Println(query)
+		//log.Println(countQuery)
 
 		threadList, err := func() ([]models.ThreadView, error) {
 			if searchQuery != "" {

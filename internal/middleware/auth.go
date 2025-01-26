@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-	"log"
 	"net/http"
 )
 
@@ -36,10 +35,10 @@ func Auth() gin.HandlerFunc {
 
 		claims, _ := parsedToken.Claims.(*utils_auth.Claims)
 
-		log.Printf("parsedToken: %s; err: %s; claims: %v;", parsedToken, err, claims)
+		//log.Printf("parsedToken: %s; err: %s; claims: %v;", parsedToken, err, claims)
 		switch {
 		case err == nil && parsedToken.Valid:
-			log.Printf("Access token is valid.")
+			//log.Printf("Access token is valid.")
 			c.Set("UserID", claims.UserID)
 			c.Next()
 		default:

@@ -1,6 +1,7 @@
 package api_user
 
 import (
+	"1chanserver/internal/api/api_token"
 	"1chanserver/internal/models"
 	"1chanserver/internal/models/api_error"
 	"1chanserver/internal/utils/utils_auth"
@@ -9,7 +10,7 @@ import (
 	"database/sql"
 	"errors"
 	"github.com/jmoiron/sqlx"
-	"log"
+	//"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -79,11 +80,11 @@ func Register(c *gin.Context) {
 
 	hashedRefreshToken := utils_auth.HashRefreshToken(refreshToken)
 
-	log.Printf(
-		"Inserting refresh token %s for user %s at time %s",
-		hashedRefreshToken,
-		newUser.ID,
-		time.Now().UTC().Format("2006-01-02 15:04:05"))
+	//log.Printf(
+	//	"Inserting refresh token %s for user %s at time %s",
+	//	hashedRefreshToken,
+	//	newUser.ID,
+	//	time.Now().UTC().Format("2006-01-02 15:04:05"))
 
 	err = utils_db.InsertRefreshToken(&newUser, hashedRefreshToken, time.Now().UTC().Add(utils_auth.JWT_REFRESH_TOKEN_EXPIRATION), deviceID, db)
 	if err != nil {
@@ -91,7 +92,8 @@ func Register(c *gin.Context) {
 		return
 	}
 
-	c.SetCookie("Refresh-Token", refreshToken, 3600*24*14, "/", "", true, true)
+	c.SetSameSite(http.SameSiteStrictMode)
+	c.SetCookie("Refresh-Token", refreshToken, 3600*24*14, "/", "", api_token.SecureCookieEnabled, true)
 
 	c.JSON(http.StatusOK, gin.H{
 		"uuid": newUser.ID,
@@ -209,7 +211,7 @@ func Login(c *gin.Context) {
 		return
 	}
 
-	c.SetCookie("Refresh-Token", refreshToken, 3600*24*14, "/", "", true, true)
+	c.SetCookie("Refresh-Token", refreshToken, 3600*24*14, "/", "", api_token.SecureCookieEnabled, true)
 
 	c.JSON(http.StatusOK, gin.H{
 		"uuid":     storedUser.ID,
@@ -244,7 +246,7 @@ func Logout(c *gin.Context) {
 		return
 	}
 
-	c.SetCookie("Refresh-Token", "", 0, "/", "*", false, true)
+	c.SetCookie("Refresh-Token", "", 0, "/", "*", api_token.SecureCookieEnabled, true)
 	c.Status(http.StatusOK)
 }
 
@@ -287,14 +289,14 @@ func GetProfile(isOwner bool) gin.HandlerFunc {
 		var query string
 		var profile models.UserProfile
 		var err error
-
 		username := c.Param("username")
+
 		if isOwner {
 			query = "SELECT * FROM user_profiles WHERE id = $1"
 			profile, err = utils_db.FetchOne[models.UserProfile](
 				db, query, userID)
 		} else {
-			query = "SELECT * FROM user_profiles up, users u WHERE u.id = up.id AND u.username = $1"
+			query = "SELECT id, profile_picture_path, biodata, email, post_count, comment_count, creation_date FROM user_profiles up, users u WHERE u.id = up.id AND u.username = $1"
 			profile, err = utils_db.FetchOne[models.UserProfile](
 				db, query, username)
 		}

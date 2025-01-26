@@ -9,9 +9,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/jmoiron/sqlx"
-	"log"
 	"net/http"
 )
+
+var SecureCookieEnabled bool
 
 func RefreshToken(tokenType string) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -46,8 +47,8 @@ func RefreshToken(tokenType string) gin.HandlerFunc {
 		claims, ok := parsedToken.Claims.(*utils_auth.Claims)
 		switch {
 		case err == nil && ok && parsedToken.Valid:
-			log.Printf("refresh token is valid")
-			log.Printf("userID: %s", claims.UserID)
+			//log.Printf("refresh token is valid")
+			//log.Printf("userID: %s", claims.UserID)
 			newAccessToken, err := utils_auth.GenerateAccessToken(claims.UserID)
 			if err != nil {
 				c.Header("X-Refresh-Token", "failed")

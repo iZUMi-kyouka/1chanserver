@@ -35,6 +35,16 @@ func main() {
 	routes.BaseAPI = os.Getenv("BASE_API")
 	routes.BaseURL = os.Getenv("BASE_URL")
 	routes.APIRoot = routes.BaseURL + routes.BaseAPI
+
+	secureCookieEnabled := os.Getenv("SECURE_COOKIE")
+	if secureCookieEnabled == "true" {
+		api_token.SecureCookieEnabled = true
+	} else if secureCookieEnabled == "false" {
+		api_token.SecureCookieEnabled = false
+	} else {
+		panic("invalid SECURE_COOKIE environment variable")
+	}
+
 	utils_auth.JWT_SECRET_KEY = []byte(os.Getenv("JWT_SECRET_KEY"))
 
 	// Initialise database
@@ -64,6 +74,7 @@ func main() {
 		})
 		v1.GET("/reflect/:required/*optional", api_dev.ReflectPath)
 
+		// User routes
 		users := v1.Group("/users")
 		{
 			usersAuth := users.Group("/", middleware.Auth())
@@ -85,6 +96,7 @@ func main() {
 			users.GET("/refresh", api_token.RefreshToken("continue"))
 		}
 
+		// Thread routes
 		threads := v1.Group("/threads")
 		{
 			threadsAuth := threads.Group("/", middleware.Auth())
@@ -105,6 +117,7 @@ func main() {
 
 		}
 
+		// Comment routes
 		comments := v1.Group("/comments")
 		{
 			commentsAuth := comments.Group("/", middleware.Auth())
@@ -118,8 +131,10 @@ func main() {
 			}
 
 			comments.GET("/:commentID", api_comment.View())
+			comments.GET("/thread/:threadID", api_comment.List())
 		}
 
+		// Tags route
 		tags := v1.Group("/tags")
 		{
 			tagsAuth := tags.Group("/", middleware.Auth())
@@ -128,6 +143,13 @@ func main() {
 			}
 		}
 
+		// NOT FULLY IMPLEMENTED: Notifications route
+		notifications := v1.Group("/notifications")
+		{
+			notifications.GET("/notifications", api_notification.GetGlobalNotifications())
+		}
+
+		// File upload route
 		upload := v1.Group("/upload")
 		{
 			//uploadAuth := upload.Group("/", middleware.Auth())
@@ -135,11 +157,7 @@ func main() {
 
 		}
 
-		notifications := v1.Group("/notifications")
-		{
-			notifications.GET("/notifications", api_notification.GetGlobalNotifications())
-		}
-
+		// File server routes
 		r.Static("/files", "./public/uploads")
 	}
 

@@ -102,7 +102,6 @@ func HandleTxRollback(tx *sqlx.Tx, err *error, c *gin.Context) {
 		}
 		panic(p)
 	} else if *err != nil {
-		log.Printf("error detected: %s", *err)
 		err := tx.Rollback()
 		if err != nil {
 			log.Fatalf("failed to rollback db: %s", err.Error())
@@ -143,7 +142,7 @@ func ToInQueryForm[T any](s []T) string {
 }
 
 func GetTotalRecordNo(db *sqlx.DB, query string, args ...interface{}) (int, error) {
-	recordNo, err := FetchOne[int](db, query, args)
+	recordNo, err := FetchOne[int](db, query, args...)
 	if err != nil {
 		return -1, err
 	}

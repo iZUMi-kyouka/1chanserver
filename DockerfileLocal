@@ -1,0 +1,61 @@
+# Stage 1: Build
+FROM golang:1.23 AS builder
+
+# Set up environment variables
+ENV CGO_ENABLED=0 GOOS=linux GOARCH=amd64
+
+# Set the working directory inside the container
+WORKDIR /app
+
+# Copy the Go module files and download dependencies
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy the rest of the application source code
+COPY . .
+
+# Build the Go app
+RUN go build -o server ./cmd/server/main.go
+
+# Stage 2: Database Migration
+FROM postgres:latest AS db-migrator
+
+# Set up PostgreSQL environment
+ENV POSTGRES_USER=postgres
+ENV POSTGRES_PASSWORD=postgres
+ENV POSTGRES_DB=forum
+
+# Copy migration SQL scripts
+COPY setup.sql /docker-entrypoint-initdb.d/
+
+# Run PostgreSQL to apply migrations
+RUN ["docker-entrypoint.sh", "postgres"] & \
+    sleep 10 && \
+    psql -U postgres -d mydb -f /docker-entrypoint-initdb.d/setup.sql && \
+    kill $(pgrep postgres)
+
+# Stage 3: Runtime
+FROM alpine:latest
+
+# Install necessary runtime dependencies
+RUN apk --no-cache add ca-certificates
+
+# Set the working directory inside the container
+WORKDIR /root/
+
+# Copy the built binary from the builder stage
+COPY --from=builder /app/server .
+COPY .env .
+
+# Copy public resources
+RUN mkdir -p public/uploads/profile_pictures
+
+# Copy the database setup from the db-migrator stage
+COPY --from=db-migrator /docker-entrypoint-initdb.d/ .
+
+# Expose the port your app listens on
+EXPOSE 8080
+
+# Command to run the app
+ENV GIN_MODE=release
+CMD ["./server"]

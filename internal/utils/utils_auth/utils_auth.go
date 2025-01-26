@@ -12,6 +12,7 @@ import (
 	"github.com/jmoiron/sqlx"
 	"golang.org/x/crypto/argon2"
 	"log"
+	"net/http"
 	"os"
 	"regexp"
 	"strconv"
@@ -32,8 +33,9 @@ const (
 	ARGON2_KEYLENGTH  = uint32(32)
 	ARGON2_SALTLENGTH = uint32(16)
 
-	JWT_ACCESS_TOKEN_EXPIRATION  = 10 * time.Second
-	JWT_REFRESH_TOKEN_EXPIRATION = 14 * 24 * time.Hour
+	JWT_ACCESS_TOKEN_EXPIRATION          = 5 * time.Minute
+	JWT_REFRESH_TOKEN_EXPIRATION         = 14 * 24 * time.Hour
+	JWT_REFRESH_TOKEN_EXPIRATION_MAX_AGE = 3600 * 24 * 14
 )
 
 // formatHash takes in a salt and Argon2hash of a password in bytes,
@@ -119,7 +121,7 @@ func VerifyArgon2Hash(payload string, storedHash string) bool {
 	computedHash := base64.RawStdEncoding.EncodeToString(
 		argon2.IDKey([]byte(payload), decodedSalt, arg2Time, arg2Mem, arg2Threads, ARGON2_KEYLENGTH))
 
-	log.Printf(">> computedHash: %s | expectedHash: %s", computedHash, expectedHash)
+	//log.Printf(">> computedHash: %s | expectedHash: %s", computedHash, expectedHash)
 	return computedHash == expectedHash
 }
 
@@ -173,7 +175,12 @@ func ValidateRefreshToken(db *sqlx.DB, userID uuid.UUID, givenRefreshToken strin
 	return nil
 }
 
-func SetAccessAndRefreshToken(c *gin.Context, refreshToken string, accessToken string) {
-	c.SetCookie("Refresh-Token", refreshToken, 3600*24*14, "/", "", true, true)
-	c.SetCookie("Authorization", fmt.Sprintf("Bearer %s", accessToken), 60*10, "/", "", false, false)
+func SetRefreshTokenCookie(c *gin.Context, refreshToken string) {
+	secureCookieEnabled := os.Getenv("SECURE_COOKIE")
+
+	if secureCookieEnabled == "true" {
+		c.SetSameSite(http.SameSiteStrictMode)
+	}
+
+	c.SetCookie("Refresh-Token", refreshToken, JWT_REFRESH_TOKEN_EXPIRATION_MAX_AGE, "/", "", secureCookieEnabled == "true", true)
 }
