@@ -42,6 +42,3 @@ docker-compose up
 ```
 
 If you encounter an error shown in Docker’s log as something along the line of the server unable to connect to the database, restart the container by pressing Ctrl+C, and then running the last command in step 5.
-
-#### Acknowledgment of AI Usage
-A minor portion of code in this repository are partly derived from outputs of generative AI.
