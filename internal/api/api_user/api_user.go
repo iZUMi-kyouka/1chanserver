@@ -296,7 +296,7 @@ func GetProfile(isOwner bool) gin.HandlerFunc {
 			profile, err = utils_db.FetchOne[models.UserProfile](
 				db, query, userID)
 		} else {
-			query = "SELECT u.id, profile_picture_path, biodata, email, post_count, comment_count, creation_date FROM user_profiles up, users u WHERE u.id = up.id AND u.username = $1"
+			query = "SELECT id, profile_picture_path, biodata, email, post_count, comment_count, creation_date FROM user_profiles up, users u WHERE u.id = up.id AND u.username = $1"
 			profile, err = utils_db.FetchOne[models.UserProfile](
 				db, query, username)
 		}
